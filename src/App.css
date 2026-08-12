@@ -1,0 +1,63 @@
+.upload-zone {
+  display: flex;
+  min-height: 25rem;
+  cursor: pointer;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px dashed #cbd5e1;
+  border-radius: 1.25rem;
+  background:
+    linear-gradient(white, white) padding-box,
+    linear-gradient(135deg, rgba(255, 90, 69, 0.05), rgba(99, 102, 241, 0.05)) border-box;
+  padding: 2rem;
+  text-align: center;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.upload-zone:hover,
+.upload-zone:focus-visible,
+.upload-zone--active {
+  border-color: #ff7867;
+  background:
+    linear-gradient(#fff9f7, #fff9f7) padding-box,
+    linear-gradient(135deg, #ff7867, #8b94f7) border-box;
+  box-shadow: 0 0 0 4px rgba(255, 90, 69, 0.08);
+  outline: none;
+}
+
+.upload-zone--active {
+  transform: scale(1.01);
+}
+
+.pdf-viewer-shell {
+  overflow: hidden;
+  border-radius: 0.75rem;
+  background: white;
+  box-shadow: 0 10px 40px rgba(30, 41, 59, 0.1);
+}
+
+.pdf-viewer {
+  display: block;
+  width: 100%;
+  height: calc(100svh - 12.5rem);
+  min-height: 34rem;
+  border: 0;
+  background: white;
+}
+
+@media (max-width: 639px) {
+  .upload-zone {
+    min-height: 22rem;
+    padding: 1.5rem;
+  }
+
+  .pdf-viewer {
+    height: calc(100svh - 13.5rem);
+    min-height: 30rem;
+  }
+}

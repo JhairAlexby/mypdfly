@@ -7,10 +7,12 @@ import type {
 import {
   Blend,
   Bold,
+  Check,
   ChevronDown,
   ChevronsDown,
   ChevronsUp,
   Circle,
+  Eraser,
   FileText,
   Italic,
   Layers,
@@ -21,9 +23,11 @@ import {
   MousePointer2,
   Move,
   Palette,
+  PenLine,
   RotateCcw,
   Shapes,
   Square,
+  Signature as SignatureIcon,
   Trash2,
   Triangle,
   Type,
@@ -41,6 +45,14 @@ import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -68,7 +80,7 @@ import { Slider } from '@/components/ui/slider'
 GlobalWorkerOptions.workerSrc = pdfWorker
 
 type ShapeTool = 'rectangle' | 'circle' | 'triangle' | 'line'
-type EditorTool = 'text' | 'blur' | ShapeTool | null
+type EditorTool = 'text' | 'blur' | 'signature' | ShapeTool | null
 type ResizeHandle = 'nw' | 'ne' | 'sw' | 'se' | 'start' | 'end'
 type LayerAction = 'front' | 'forward' | 'backward' | 'back'
 type TextFontFamily = 'helvetica' | 'times' | 'georgia' | 'courier' | 'verdana'
@@ -90,6 +102,11 @@ type ShapeFormat = {
 
 type BlurFormat = {
   intensity: number
+}
+
+type SignatureFormat = {
+  color: string
+  strokeWidth: number
 }
 
 type Point = {
@@ -128,7 +145,26 @@ type BlurAnnotation = {
   layer: number
 }
 
-type AreaAnnotation = ShapeAnnotation | BlurAnnotation
+type SignaturePoint = Point & {
+  pressure: number
+}
+
+type SignatureStroke = SignaturePoint[]
+
+type SignatureAnnotation = {
+  id: string
+  pageNumber: number
+  type: 'signature'
+  start: Point
+  end: Point
+  strokes: SignatureStroke[]
+  format: SignatureFormat
+  layer: number
+}
+
+type SignatureTemplate = Pick<SignatureAnnotation, 'strokes' | 'format'>
+
+type AreaAnnotation = ShapeAnnotation | BlurAnnotation | SignatureAnnotation
 type Annotation = TextAnnotation | AreaAnnotation
 
 type TextDraft = {
@@ -154,7 +190,15 @@ type BlurDraft = {
   format: BlurFormat
 }
 
-type AreaDraft = ShapeDraft | BlurDraft
+type SignatureDraft = {
+  type: 'signature'
+  start: Point
+  end: Point
+  strokes: SignatureStroke[]
+  format: SignatureFormat
+}
+
+type AreaDraft = ShapeDraft | BlurDraft | SignatureDraft
 
 type AnnotationInteraction =
   | {
@@ -180,6 +224,7 @@ type PdfPageProps = {
   textFormat: TextFormat
   shapeFormat: ShapeFormat
   blurFormat: BlurFormat
+  signatureTemplate: SignatureTemplate | null
   annotations: Annotation[]
   selectedAnnotationId: string | null
   textDraft: TextDraft | null
@@ -192,6 +237,9 @@ type PdfPageProps = {
   onAddBlur: (
     annotation: Omit<BlurAnnotation, 'id' | 'pageNumber' | 'layer'>,
   ) => void
+  onAddSignature: (
+    annotation: Omit<SignatureAnnotation, 'id' | 'pageNumber' | 'layer'>,
+  ) => void
   onUpdateAnnotation: (annotation: Annotation) => void
   onSelectAnnotation: (id: string | null) => void
 }
@@ -199,6 +247,7 @@ type PdfPageProps = {
 const toolLabels: Record<Exclude<EditorTool, null>, string> = {
   text: 'Texto',
   blur: 'Difuminar',
+  signature: 'Firma',
   rectangle: 'Rectángulo',
   circle: 'Círculo',
   triangle: 'Triángulo',
@@ -233,6 +282,11 @@ const defaultShapeFormat: ShapeFormat = {
 
 const defaultBlurFormat: BlurFormat = {
   intensity: 12,
+}
+
+const defaultSignatureFormat: SignatureFormat = {
+  color: '#111827',
+  strokeWidth: 6,
 }
 
 const fontFamilies: Array<{
@@ -294,11 +348,18 @@ const isTextAnnotation = (
 const isShapeAnnotation = (
   annotation: Annotation,
 ): annotation is ShapeAnnotation =>
-  annotation.type !== 'text' && annotation.type !== 'blur'
+  annotation.type === 'rectangle' ||
+  annotation.type === 'circle' ||
+  annotation.type === 'triangle' ||
+  annotation.type === 'line'
 
 const isBlurAnnotation = (
   annotation: Annotation,
 ): annotation is BlurAnnotation => annotation.type === 'blur'
+
+const isSignatureAnnotation = (
+  annotation: Annotation,
+): annotation is SignatureAnnotation => annotation.type === 'signature'
 
 const getPoint = (
   event: Pick<ReactPointerEvent<Element> | ReactMouseEvent<Element>, 'clientX' | 'clientY'>,
@@ -567,6 +628,360 @@ function BlurMark({
   )
 }
 
+const getSignaturePath = (stroke: SignatureStroke) => {
+  if (stroke.length < 2) return ''
+
+  const toCoordinates = (point: SignaturePoint) => ({
+    x: point.x * 1000,
+    y: point.y * 300,
+  })
+  const first = toCoordinates(stroke[0])
+  let path = `M ${first.x.toFixed(2)} ${first.y.toFixed(2)}`
+
+  for (let index = 1; index < stroke.length - 1; index += 1) {
+    const point = toCoordinates(stroke[index])
+    const nextPoint = toCoordinates(stroke[index + 1])
+    const middleX = (point.x + nextPoint.x) / 2
+    const middleY = (point.y + nextPoint.y) / 2
+    path += ` Q ${point.x.toFixed(2)} ${point.y.toFixed(2)} ${middleX.toFixed(2)} ${middleY.toFixed(2)}`
+  }
+
+  const last = toCoordinates(stroke[stroke.length - 1])
+  return `${path} L ${last.x.toFixed(2)} ${last.y.toFixed(2)}`
+}
+
+function SignatureDrawing({
+  strokes,
+  format,
+}: {
+  strokes: SignatureStroke[]
+  format: SignatureFormat
+}) {
+  return (
+    <>
+      {strokes.map((stroke, index) => {
+        const averagePressure =
+          stroke.reduce((total, point) => total + point.pressure, 0) /
+          Math.max(stroke.length, 1)
+        const strokeWidth = format.strokeWidth * (0.85 + averagePressure * 0.3)
+
+        if (stroke.length === 1) {
+          return (
+            <circle
+              key={index}
+              cx={stroke[0].x * 1000}
+              cy={stroke[0].y * 300}
+              r={strokeWidth / 2}
+              fill={format.color}
+            />
+          )
+        }
+
+        return (
+          <path
+            key={index}
+            d={getSignaturePath(stroke)}
+            fill="none"
+            stroke={format.color}
+            strokeWidth={strokeWidth}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        )
+      })}
+    </>
+  )
+}
+
+function SignaturePad({
+  initialFormat,
+  onCancel,
+  onUse,
+}: {
+  initialFormat: SignatureFormat
+  onCancel: () => void
+  onUse: (strokes: SignatureStroke[], format: SignatureFormat) => void
+}) {
+  const padRef = useRef<SVGSVGElement>(null)
+  const strokesRef = useRef<SignatureStroke[]>([])
+  const activePointerRef = useRef<number | null>(null)
+  const activeStrokeRef = useRef<number | null>(null)
+  const animationFrameRef = useRef<number | null>(null)
+  const [strokes, setStrokes] = useState<SignatureStroke[]>([])
+  const [format, setFormat] = useState(initialFormat)
+
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current)
+      }
+    }
+  }, [])
+
+  const scheduleRender = () => {
+    if (animationFrameRef.current !== null) return
+    animationFrameRef.current = requestAnimationFrame(() => {
+      animationFrameRef.current = null
+      setStrokes(strokesRef.current.map((stroke) => [...stroke]))
+    })
+  }
+
+  const toSignaturePoint = (event: PointerEvent): SignaturePoint | null => {
+    if (!padRef.current) return null
+    const bounds = padRef.current.getBoundingClientRect()
+    if (!bounds.width || !bounds.height) return null
+
+    return {
+      x: clamp((event.clientX - bounds.left) / bounds.width),
+      y: clamp((event.clientY - bounds.top) / bounds.height),
+      pressure: event.pressure > 0 ? event.pressure : 0.5,
+    }
+  }
+
+  const appendSignaturePoint = (point: SignaturePoint) => {
+    const strokeIndex = activeStrokeRef.current
+    if (strokeIndex === null) return false
+    const stroke = strokesRef.current[strokeIndex]
+    if (!stroke) return false
+
+    const previousPoint = stroke[stroke.length - 1]
+    if (
+      previousPoint &&
+      Math.hypot(point.x - previousPoint.x, point.y - previousPoint.y) < 0.0015
+    ) {
+      return false
+    }
+
+    stroke.push(point)
+    return true
+  }
+
+  const appendPoints = (events: PointerEvent[]) => {
+    let didAppend = false
+    events.forEach((event) => {
+      const point = toSignaturePoint(event)
+      if (!point) return
+      didAppend = appendSignaturePoint(point) || didAppend
+    })
+    if (didAppend) scheduleRender()
+  }
+
+  const beginStroke = (point: SignaturePoint) => {
+    activeStrokeRef.current = strokesRef.current.length
+    strokesRef.current = [...strokesRef.current, [point]]
+    scheduleRender()
+  }
+
+  const startDrawing = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (event.button !== 0 || !padRef.current) return
+    event.preventDefault()
+    const point = toSignaturePoint(event.nativeEvent)
+    if (!point) return
+
+    event.currentTarget.setPointerCapture(event.pointerId)
+    activePointerRef.current = event.pointerId
+    beginStroke(point)
+  }
+
+  const continueDrawing = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (activePointerRef.current !== event.pointerId) return
+    event.preventDefault()
+    const coalescedEvents = event.nativeEvent.getCoalescedEvents?.()
+    appendPoints(coalescedEvents?.length ? coalescedEvents : [event.nativeEvent])
+  }
+
+  const finishDrawing = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (activePointerRef.current !== event.pointerId) return
+    event.preventDefault()
+    appendPoints([event.nativeEvent])
+    activePointerRef.current = null
+    activeStrokeRef.current = null
+  }
+
+  const clearSignature = () => {
+    activePointerRef.current = null
+    activeStrokeRef.current = null
+    strokesRef.current = []
+    setStrokes([])
+  }
+
+  const hasSignature = strokes.some((stroke) => stroke.length > 1)
+
+  return (
+    <>
+      <div className="signature-pad-tools">
+        <span className="signature-pad-tool-label">
+          <PenLine aria-hidden="true" />
+          Color de tinta
+        </span>
+        <div className="flex items-center gap-1.5">
+          {['#111827', '#1d4ed8'].map((color) => (
+            <Button
+              key={color}
+              type="button"
+              variant="outline"
+              size="icon-sm"
+              className={`signature-ink-swatch ${format.color === color ? 'signature-ink-swatch--active' : ''}`}
+              style={{ backgroundColor: color }}
+              onClick={() => setFormat((current) => ({ ...current, color }))}
+              aria-label={color === '#111827' ? 'Tinta negra' : 'Tinta azul'}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div className="signature-pad-wrap">
+        <svg
+          ref={padRef}
+          className="signature-pad"
+          viewBox="0 0 1000 300"
+          preserveAspectRatio="none"
+          onPointerDown={startDrawing}
+          onPointerMove={continueDrawing}
+          onPointerUp={finishDrawing}
+          onPointerCancel={finishDrawing}
+          aria-label="Lienzo para dibujar la firma"
+          role="img"
+        >
+          <SignatureDrawing strokes={strokes} format={format} />
+        </svg>
+        {!hasSignature && (
+          <div className="signature-pad-placeholder" aria-hidden="true">
+            <SignatureIcon />
+            <span>Firma aquí</span>
+          </div>
+        )}
+        <span className="signature-pad-baseline" aria-hidden="true" />
+      </div>
+
+      <p className="signature-pad-hint">
+        Mantén presionado mientras firmas. Suelta y vuelve a presionar para
+        agregar otra parte.
+      </p>
+
+      <DialogFooter className="items-center sm:justify-between">
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={clearSignature}
+          disabled={!strokes.length}
+        >
+          <Eraser data-icon="inline-start" />
+          Limpiar
+        </Button>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row">
+          <Button type="button" variant="outline" onClick={onCancel}>
+            Cancelar
+          </Button>
+          <Button
+            type="button"
+            onClick={() =>
+              onUse(
+                strokesRef.current.map((stroke) => [...stroke]),
+                format,
+              )
+            }
+            disabled={!hasSignature}
+          >
+            <Check data-icon="inline-start" />
+            Usar firma
+          </Button>
+        </div>
+      </DialogFooter>
+    </>
+  )
+}
+
+function SignatureMark({
+  annotation,
+  isSelected = false,
+  isDraft = false,
+  onMoveStart,
+  onResizeStart,
+}: {
+  annotation: SignatureAnnotation | SignatureDraft
+  isSelected?: boolean
+  isDraft?: boolean
+  onMoveStart?: (
+    event: ReactPointerEvent<HTMLDivElement>,
+    annotation: SignatureAnnotation,
+  ) => void
+  onResizeStart?: (
+    event: ReactPointerEvent<HTMLSpanElement>,
+    annotation: SignatureAnnotation,
+    handle: ResizeHandle,
+  ) => void
+}) {
+  const savedAnnotation = 'id' in annotation ? annotation : null
+  const x = Math.min(annotation.start.x, annotation.end.x)
+  const y = Math.min(annotation.start.y, annotation.end.y)
+  const width = Math.abs(annotation.end.x - annotation.start.x)
+  const height = Math.abs(annotation.end.y - annotation.start.y)
+
+  const handleMoveStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!savedAnnotation) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    onMoveStart?.(event, savedAnnotation)
+  }
+
+  const handleResizeStart = (
+    event: ReactPointerEvent<HTMLSpanElement>,
+    handle: ResizeHandle,
+  ) => {
+    if (!savedAnnotation) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    onResizeStart?.(event, savedAnnotation, handle)
+  }
+
+  return (
+    <div
+      className={[
+        'signature-annotation',
+        isSelected && 'signature-annotation--selected',
+        isDraft && 'signature-annotation--draft',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      style={{
+        left: `${x * 100}%`,
+        top: `${y * 100}%`,
+        width: `${width * 100}%`,
+        height: `${height * 100}%`,
+        zIndex: savedAnnotation?.layer ?? 10000,
+      }}
+      onPointerDown={savedAnnotation ? handleMoveStart : undefined}
+      onClick={(event) => event.stopPropagation()}
+      title={savedAnnotation ? 'Arrastra para mover la firma' : undefined}
+    >
+      <svg
+        className="signature-annotation-drawing"
+        viewBox="0 0 1000 300"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <SignatureDrawing
+          strokes={annotation.strokes}
+          format={annotation.format}
+        />
+      </svg>
+      {isSelected &&
+        (['nw', 'ne', 'sw', 'se'] as const).map((handle) => (
+          <span
+            key={handle}
+            className={`signature-resize-handle signature-resize-handle--${handle}`}
+            onPointerDown={(event) => handleResizeStart(event, handle)}
+            onClick={(event) => event.stopPropagation()}
+            aria-hidden="true"
+          />
+        ))}
+    </div>
+  )
+}
+
 function PdfPage({
   pdfDocument,
   pageNumber,
@@ -574,6 +989,7 @@ function PdfPage({
   textFormat,
   shapeFormat,
   blurFormat,
+  signatureTemplate,
   annotations,
   selectedAnnotationId,
   textDraft,
@@ -582,6 +998,7 @@ function PdfPage({
   onEditText,
   onAddShape,
   onAddBlur,
+  onAddSignature,
   onUpdateAnnotation,
   onSelectAnnotation,
 }: PdfPageProps) {
@@ -681,12 +1098,22 @@ function PdfPage({
             end: point,
             format: blurFormat,
           }
-        : {
-            type: activeTool,
-            start: point,
-            end: point,
-            format: shapeFormat,
-          },
+        : activeTool === 'signature' && signatureTemplate
+          ? {
+              type: 'signature',
+              start: point,
+              end: point,
+              strokes: signatureTemplate.strokes,
+              format: signatureTemplate.format,
+            }
+          : activeTool !== 'signature'
+            ? {
+                type: activeTool,
+                start: point,
+                end: point,
+                format: shapeFormat,
+              }
+            : null,
     )
   }
 
@@ -846,9 +1273,17 @@ function PdfPage({
         Math.abs(pointerEnd.y - areaDraft.start.y) < 0.015
       const end = isTiny
         ? {
-            x: clamp(areaDraft.start.x + 0.18),
+            x: clamp(
+              areaDraft.start.x +
+                (areaDraft.type === 'signature' ? 0.28 : 0.18),
+            ),
             y: clamp(
-              areaDraft.start.y + (areaDraft.type === 'line' ? 0.001 : 0.12),
+              areaDraft.start.y +
+                (areaDraft.type === 'line'
+                  ? 0.001
+                  : areaDraft.type === 'signature'
+                    ? 0.085
+                    : 0.12),
             ),
           }
         : pointerEnd
@@ -856,6 +1291,8 @@ function PdfPage({
       const normalizedArea = normalizeArea({ ...areaDraft, end })
       if (normalizedArea.type === 'blur') {
         onAddBlur(normalizedArea)
+      } else if (normalizedArea.type === 'signature') {
+        onAddSignature(normalizedArea)
       } else {
         onAddShape(normalizedArea)
       }
@@ -921,7 +1358,19 @@ function PdfPage({
           />
         ))}
 
-        {areaDraft && areaDraft.type !== 'blur' && (
+        {annotations.filter(isSignatureAnnotation).map((annotation) => (
+          <SignatureMark
+            key={annotation.id}
+            annotation={annotation}
+            isSelected={selectedAnnotationId === annotation.id}
+            onMoveStart={startAreaMove}
+            onResizeStart={startAreaResize}
+          />
+        ))}
+
+        {areaDraft &&
+          areaDraft.type !== 'blur' &&
+          areaDraft.type !== 'signature' && (
           <svg
             className="annotation-svg"
             viewBox="0 0 1000 1000"
@@ -931,10 +1380,14 @@ function PdfPage({
           >
             <ShapeMark annotation={areaDraft} isDraft />
           </svg>
-        )}
+          )}
 
         {areaDraft?.type === 'blur' && (
           <BlurMark annotation={areaDraft} isDraft />
+        )}
+
+        {areaDraft?.type === 'signature' && (
+          <SignatureMark annotation={areaDraft} isDraft />
         )}
 
         {annotations
@@ -1031,6 +1484,9 @@ export function PdfEditor({ file }: { file: File }) {
     useState<ShapeFormat>(defaultShapeFormat)
   const [currentBlurFormat, setCurrentBlurFormat] =
     useState<BlurFormat>(defaultBlurFormat)
+  const [signatureDialogOpen, setSignatureDialogOpen] = useState(false)
+  const [signatureTemplate, setSignatureTemplate] =
+    useState<SignatureTemplate | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -1067,6 +1523,8 @@ export function PdfEditor({ file }: { file: File }) {
       : null
   const selectedBlur =
     selectedAnnotation?.type === 'blur' ? selectedAnnotation : null
+  const selectedSignature =
+    selectedAnnotation?.type === 'signature' ? selectedAnnotation : null
   const activeTextFormat =
     textDraft?.format ?? selectedText?.format ?? currentTextFormat
   const activeShapeFormat = selectedShape?.format ?? currentShapeFormat
@@ -1074,9 +1532,13 @@ export function PdfEditor({ file }: { file: File }) {
   const showTextFormatter =
     activeTool === 'text' || Boolean(textDraft) || Boolean(selectedText)
   const shapeToolActive =
-    activeTool !== null && activeTool !== 'text' && activeTool !== 'blur'
+    activeTool !== null &&
+    activeTool !== 'text' &&
+    activeTool !== 'blur' &&
+    activeTool !== 'signature'
   const showShapeFormatter = shapeToolActive || Boolean(selectedShape)
   const showBlurFormatter = activeTool === 'blur' || Boolean(selectedBlur)
+  const showSignatureFormatter = Boolean(selectedSignature)
 
   const selectAnnotation = (id: string | null) => {
     setSelectedAnnotationId(id)
@@ -1087,7 +1549,7 @@ export function PdfEditor({ file }: { file: File }) {
       setCurrentTextFormat(annotation.format)
     } else if (annotation?.type === 'blur') {
       setCurrentBlurFormat(annotation.format)
-    } else if (annotation) {
+    } else if (annotation && isShapeAnnotation(annotation)) {
       setCurrentShapeFormat(annotation.format)
     }
   }
@@ -1146,6 +1608,21 @@ export function PdfEditor({ file }: { file: File }) {
         ),
       )
     }
+  }
+
+  const applySignatureFormat = (patch: Partial<SignatureFormat>) => {
+    if (!selectedSignature) return
+
+    setAnnotations((current) =>
+      current.map((annotation) =>
+        annotation.id === selectedSignature.id && annotation.type === 'signature'
+          ? {
+              ...annotation,
+              format: { ...annotation.format, ...patch },
+            }
+          : annotation,
+      ),
+    )
   }
 
   const commitText = (draft: TextDraft) => {
@@ -1241,6 +1718,24 @@ export function PdfEditor({ file }: { file: File }) {
     setActiveTool(null)
   }
 
+  const addSignature = (
+    pageNumber: number,
+    signature: Omit<SignatureAnnotation, 'id' | 'pageNumber' | 'layer'>,
+  ) => {
+    const annotationId = crypto.randomUUID()
+    setAnnotations((current) => [
+      ...current,
+      {
+        ...signature,
+        id: annotationId,
+        pageNumber,
+        layer: getNextLayer(current, pageNumber),
+      },
+    ])
+    setSelectedAnnotationId(annotationId)
+    setActiveTool(null)
+  }
+
   const updateAnnotation = (updatedAnnotation: Annotation) => {
     setAnnotations((current) =>
       current.map((annotation) =>
@@ -1250,7 +1745,7 @@ export function PdfEditor({ file }: { file: File }) {
   }
 
   const changeSelectedAnnotationLayer = (action: LayerAction) => {
-    const selectedArea = selectedShape ?? selectedBlur
+    const selectedArea = selectedShape ?? selectedBlur ?? selectedSignature
     if (!selectedArea) return
 
     setAnnotations((current) => {
@@ -1306,8 +1801,32 @@ export function PdfEditor({ file }: { file: File }) {
 
   return (
     <div
-      className={`pdf-editor ${showTextFormatter || showShapeFormatter || showBlurFormatter ? 'pdf-editor--context-format' : ''}`}
+      className={`pdf-editor ${showTextFormatter || showShapeFormatter || showBlurFormatter || showSignatureFormatter ? 'pdf-editor--context-format' : ''}`}
     >
+      <Dialog open={signatureDialogOpen} onOpenChange={setSignatureDialogOpen}>
+        <DialogContent className="signature-dialog sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Dibuja tu firma</DialogTitle>
+            <DialogDescription>
+              Usa el mouse, trackpad, lápiz o dedo como si fueran un bolígrafo.
+            </DialogDescription>
+          </DialogHeader>
+          {signatureDialogOpen && (
+            <SignaturePad
+              initialFormat={signatureTemplate?.format ?? defaultSignatureFormat}
+              onCancel={() => setSignatureDialogOpen(false)}
+              onUse={(strokes, format) => {
+                setSignatureTemplate({ strokes, format })
+                setSignatureDialogOpen(false)
+                setSelectedAnnotationId(null)
+                setTextDraft(null)
+                setActiveTool('signature')
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
       <div className="editor-toolbar" aria-label="Herramientas de edición">
         <div className="flex min-w-max items-center gap-1.5">
           <Button
@@ -1376,6 +1895,22 @@ export function PdfEditor({ file }: { file: File }) {
             Difuminar
           </Button>
 
+          <Button
+            variant={activeTool === 'signature' ? 'secondary' : 'ghost'}
+            size="sm"
+            className={activeTool === 'signature' ? 'editor-tool-active' : ''}
+            onClick={() => {
+              setActiveTool(null)
+              setSelectedAnnotationId(null)
+              setTextDraft(null)
+              setSignatureDialogOpen(true)
+            }}
+            aria-pressed={activeTool === 'signature'}
+          >
+            <SignatureIcon data-icon="inline-start" />
+            Firma
+          </Button>
+
           <Separator orientation="vertical" className="mx-1 h-6" />
 
           <Button
@@ -1397,7 +1932,9 @@ export function PdfEditor({ file }: { file: File }) {
                 ? 'Haz clic en la página y escribe'
                 : activeTool === 'blur'
                   ? 'Arrastra sobre la sección que quieres ocultar'
-                  : 'Haz clic y arrastra para dibujar'}
+                  : activeTool === 'signature'
+                    ? 'Haz clic o arrastra donde quieres colocar la firma'
+                    : 'Haz clic y arrastra para dibujar'}
               <Badge variant="secondary" className="ml-1 rounded-full px-2 text-[11px]">
                 {toolLabels[activeTool]}
               </Badge>
@@ -1409,10 +1946,12 @@ export function PdfEditor({ file }: { file: File }) {
                 ? 'Arrastra para mover · Doble clic para editar'
                 : selectedAnnotation.type === 'blur'
                   ? 'Arrastra el área difuminada · Usa las esquinas para ajustar'
-                  : 'Arrastra para mover · Usa los puntos azules para redimensionar'}
+                  : selectedAnnotation.type === 'signature'
+                    ? 'Arrastra la firma · Usa las esquinas para ajustar'
+                    : 'Arrastra para mover · Usa los puntos azules para redimensionar'}
             </>
           ) : (
-            'Selecciona Texto, Formas o Difuminar para comenzar'
+            'Selecciona Texto, Formas, Difuminar o Firma para comenzar'
           )}
         </div>
       </div>
@@ -1832,6 +2371,90 @@ export function PdfEditor({ file }: { file: File }) {
         </div>
       )}
 
+      {showSignatureFormatter && selectedSignature && (
+        <div
+          className="signature-format-toolbar"
+          role="toolbar"
+          aria-label="Formato de la firma"
+        >
+          <span className="signature-format-label">Firma</span>
+
+          <div className="signature-color-control">
+            <span className="signature-control-label">Tinta</span>
+            {['#111827', '#1d4ed8'].map((color) => (
+              <Button
+                key={color}
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                className={`signature-ink-swatch ${selectedSignature.format.color === color ? 'signature-ink-swatch--active' : ''}`}
+                style={{ backgroundColor: color }}
+                onClick={() => applySignatureFormat({ color })}
+                aria-label={color === '#111827' ? 'Tinta negra' : 'Tinta azul'}
+              />
+            ))}
+          </div>
+
+          <Separator orientation="vertical" className="mx-0.5 h-6" />
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shape-position-trigger"
+                aria-label="Cambiar posición de la firma"
+              >
+                <Layers data-icon="inline-start" />
+                Posición
+                <ChevronDown data-icon="inline-end" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-52 p-1.5">
+              <DropdownMenuLabel>Orden de la capa</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="h-9 gap-2 px-2"
+                onSelect={() => changeSelectedAnnotationLayer('front')}
+              >
+                <ChevronsUp />
+                Traer al frente
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="h-9 gap-2 px-2"
+                onSelect={() => changeSelectedAnnotationLayer('forward')}
+              >
+                <LayersArrowUp />
+                Subir un nivel
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="h-9 gap-2 px-2"
+                onSelect={() => changeSelectedAnnotationLayer('backward')}
+              >
+                <LayersArrowDown />
+                Bajar un nivel
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="h-9 gap-2 px-2"
+                onSelect={() => changeSelectedAnnotationLayer('back')}
+              >
+                <ChevronsDown />
+                Enviar al fondo
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setSignatureDialogOpen(true)}
+          >
+            <PenLine data-icon="inline-start" />
+            Crear otra
+          </Button>
+        </div>
+      )}
+
       <div className="editor-canvas-area">
         {!pdfDocument && !loadError && (
           <div className="editor-state">
@@ -1860,6 +2483,7 @@ export function PdfEditor({ file }: { file: File }) {
                   textFormat={activeTextFormat}
                   shapeFormat={activeShapeFormat}
                   blurFormat={activeBlurFormat}
+                  signatureTemplate={signatureTemplate}
                   annotations={annotations.filter(
                     (annotation) => annotation.pageNumber === pageNumber,
                   )}
@@ -1870,6 +2494,9 @@ export function PdfEditor({ file }: { file: File }) {
                   onEditText={editText}
                   onAddShape={(shape) => addShape(pageNumber, shape)}
                   onAddBlur={(blur) => addBlur(pageNumber, blur)}
+                  onAddSignature={(signature) =>
+                    addSignature(pageNumber, signature)
+                  }
                   onUpdateAnnotation={updateAnnotation}
                   onSelectAnnotation={selectAnnotation}
                 />

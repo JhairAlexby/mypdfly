@@ -70,7 +70,8 @@
 
 .text-format-toolbar,
 .shape-format-toolbar,
-.blur-format-toolbar {
+.blur-format-toolbar,
+.signature-format-toolbar {
   z-index: 25;
   display: flex;
   min-height: 3rem;
@@ -85,13 +86,15 @@
 
 .text-format-toolbar::-webkit-scrollbar,
 .shape-format-toolbar::-webkit-scrollbar,
-.blur-format-toolbar::-webkit-scrollbar {
+.blur-format-toolbar::-webkit-scrollbar,
+.signature-format-toolbar::-webkit-scrollbar {
   display: none;
 }
 
 .text-format-label,
 .shape-format-label,
-.blur-format-label {
+.blur-format-label,
+.signature-format-label {
   margin-right: 0.25rem;
   color: #64748b;
   font-size: 0.7rem;
@@ -203,6 +206,120 @@
 
 .blur-intensity-control {
   min-width: 16rem;
+}
+
+.signature-color-control,
+.signature-pad-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.signature-color-control {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  background: white;
+  padding: 0.2rem 0.45rem;
+}
+
+.signature-control-label,
+.signature-pad-tool-label {
+  color: #475569;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.signature-pad-tool-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.signature-pad-tool-label svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.signature-ink-swatch {
+  border-color: rgba(148, 163, 184, 0.45);
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 2px white;
+}
+
+.signature-ink-swatch--active {
+  outline: 2px solid #ff5a45;
+  outline-offset: 1px;
+}
+
+.signature-dialog {
+  max-height: calc(100svh - 2rem);
+  overflow-y: auto;
+}
+
+.signature-pad-tools {
+  flex-wrap: wrap;
+}
+
+.signature-pad-wrap {
+  position: relative;
+  height: clamp(11rem, 30vw, 16rem);
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.75rem;
+  background:
+    linear-gradient(to right, rgba(226, 232, 240, 0.48) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(226, 232, 240, 0.48) 1px, transparent 1px),
+    white;
+  background-size: 1.25rem 1.25rem;
+  box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+
+.signature-pad {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.signature-pad-placeholder {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  display: flex;
+  transform: translate(-50%, -50%);
+  align-items: center;
+  gap: 0.55rem;
+  color: #94a3b8;
+  font-size: 0.9rem;
+  font-weight: 500;
+  pointer-events: none;
+}
+
+.signature-pad-placeholder svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.signature-pad-baseline {
+  position: absolute;
+  right: 8%;
+  bottom: 20%;
+  left: 8%;
+  z-index: 1;
+  height: 1px;
+  background: #cbd5e1;
+  pointer-events: none;
+}
+
+.signature-pad-hint {
+  margin-top: -0.35rem;
+  color: #64748b;
+  font-size: 0.75rem;
 }
 
 .editor-canvas-area {
@@ -374,6 +491,69 @@
   cursor: nwse-resize;
 }
 
+.signature-annotation {
+  position: absolute;
+  cursor: move;
+  touch-action: none;
+}
+
+.signature-annotation--selected,
+.signature-annotation--draft {
+  outline: 1px dashed #2563eb;
+  outline-offset: 2px;
+}
+
+.signature-annotation--draft {
+  cursor: crosshair;
+  pointer-events: none;
+}
+
+.signature-annotation-drawing {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.signature-resize-handle {
+  position: absolute;
+  width: 0.75rem;
+  height: 0.75rem;
+  border: 2px solid #2563eb;
+  border-radius: 999px;
+  background: white;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.24);
+}
+
+.signature-resize-handle--nw {
+  top: 0;
+  left: 0;
+  transform: translate(-50%, -50%);
+  cursor: nwse-resize;
+}
+
+.signature-resize-handle--ne {
+  top: 0;
+  right: 0;
+  transform: translate(50%, -50%);
+  cursor: nesw-resize;
+}
+
+.signature-resize-handle--sw {
+  bottom: 0;
+  left: 0;
+  transform: translate(-50%, 50%);
+  cursor: nesw-resize;
+}
+
+.signature-resize-handle--se {
+  right: 0;
+  bottom: 0;
+  transform: translate(50%, 50%);
+  cursor: nwse-resize;
+}
+
 .text-annotation {
   position: absolute;
   z-index: 10;
@@ -456,13 +636,15 @@
 
   .text-format-toolbar,
   .shape-format-toolbar,
-  .blur-format-toolbar {
+  .blur-format-toolbar,
+  .signature-format-toolbar {
     padding-inline: 0.65rem;
   }
 
   .text-format-label,
   .shape-format-label,
-  .blur-format-label {
+  .blur-format-label,
+  .signature-format-label {
     display: none;
   }
 

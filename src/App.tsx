@@ -1,4 +1,4 @@
-import { lazy, Suspense, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent, KeyboardEvent } from 'react'
 import {
   AlertCircle,
@@ -47,6 +47,12 @@ const formatFileSize = (bytes: number) => {
 function App() {
   const inputRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
+  const [workspaceId, setWorkspaceId] = useState(() => crypto.randomUUID())
+  const [documentSummary, setDocumentSummary] = useState({
+    fileCount: 1,
+    pageCount: 0,
+    totalSize: 0,
+  })
   const [error, setError] = useState('')
   const [isDragging, setIsDragging] = useState(false)
 
@@ -66,6 +72,12 @@ function App() {
 
     setError('')
     setFile(selectedFile)
+    setWorkspaceId(crypto.randomUUID())
+    setDocumentSummary({
+      fileCount: 1,
+      pageCount: 0,
+      totalSize: selectedFile.size,
+    })
   }
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -90,6 +102,13 @@ function App() {
     setFile(null)
     setError('')
   }
+
+  const updateDocumentSummary = useCallback(
+    (summary: { fileCount: number; pageCount: number; totalSize: number }) => {
+      setDocumentSummary(summary)
+    },
+    [],
+  )
 
   return (
     <div className="min-h-svh overflow-hidden text-foreground">
@@ -133,10 +152,14 @@ function App() {
                 </div>
                 <div className="min-w-0">
                   <CardTitle className="truncate text-sm font-semibold text-slate-950 sm:text-base">
-                    {file.name}
+                    {documentSummary.fileCount > 1
+                      ? 'Documento combinado'
+                      : file.name}
                   </CardTitle>
                   <CardDescription className="mt-0.5 flex items-center gap-1.5 text-xs">
-                    {formatFileSize(file.size)}
+                    {documentSummary.fileCount > 1
+                      ? `${documentSummary.fileCount} PDFs · ${documentSummary.pageCount} páginas · ${formatFileSize(documentSummary.totalSize)}`
+                      : formatFileSize(file.size)}
                     <span aria-hidden="true">•</span>
                     <span className="inline-flex items-center gap-1 text-emerald-700">
                       <Check className="size-3" aria-hidden="true" /> Listo para editar
@@ -176,8 +199,9 @@ function App() {
                 }
               >
                 <PdfEditor
-                  key={`${file.name}-${file.size}-${file.lastModified}`}
-                  file={file}
+                  key={workspaceId}
+                  initialFile={file}
+                  onSummaryChange={updateDocumentSummary}
                 />
               </Suspense>
             </CardContent>

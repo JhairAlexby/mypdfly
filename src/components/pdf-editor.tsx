@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type {
+  ChangeEvent,
   CSSProperties,
+  DragEvent as ReactDragEvent,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
 } from 'react'
@@ -15,6 +17,8 @@ import {
   Eraser,
   Feather,
   FileText,
+  Files,
+  GripVertical,
   Italic,
   Layers,
   LayersArrowDown,
@@ -33,6 +37,7 @@ import {
   Triangle,
   Type,
   Underline,
+  UploadCloud,
 } from 'lucide-react'
 import {
   GlobalWorkerOptions,
@@ -120,7 +125,7 @@ type Point = {
 
 type TextAnnotation = {
   id: string
-  pageNumber: number
+  pageId: string
   type: 'text'
   x: number
   y: number
@@ -131,7 +136,7 @@ type TextAnnotation = {
 
 type ShapeAnnotation = {
   id: string
-  pageNumber: number
+  pageId: string
   type: ShapeTool
   start: Point
   end: Point
@@ -141,7 +146,7 @@ type ShapeAnnotation = {
 
 type BlurAnnotation = {
   id: string
-  pageNumber: number
+  pageId: string
   type: 'blur'
   start: Point
   end: Point
@@ -157,7 +162,7 @@ type SignatureStroke = SignaturePoint[]
 
 type SignatureAnnotation = {
   id: string
-  pageNumber: number
+  pageId: string
   type: 'signature'
   start: Point
   end: Point
@@ -168,12 +173,24 @@ type SignatureAnnotation = {
 
 type SignatureTemplate = Pick<SignatureAnnotation, 'strokes' | 'format'>
 
+type PdfSource = {
+  id: string
+  file: File
+  document: PDFDocumentProxy
+}
+
+type PdfPageReference = {
+  id: string
+  sourceId: string
+  sourcePageNumber: number
+}
+
 type AreaAnnotation = ShapeAnnotation | BlurAnnotation | SignatureAnnotation
 type Annotation = TextAnnotation | AreaAnnotation
 
 type TextDraft = {
   annotationId: string | null
-  pageNumber: number
+  pageId: string
   x: number
   y: number
   value: string
@@ -223,7 +240,10 @@ type AnnotationInteraction =
 
 type PdfPageProps = {
   pdfDocument: PDFDocumentProxy
-  pageNumber: number
+  sourcePageNumber: number
+  pageId: string
+  displayPageNumber: number
+  sourceName: string
   activeTool: EditorTool
   textFormat: TextFormat
   shapeFormat: ShapeFormat
@@ -236,13 +256,13 @@ type PdfPageProps = {
   onCommitText: (draft: TextDraft) => void
   onEditText: (annotation: TextAnnotation) => void
   onAddShape: (
-    annotation: Omit<ShapeAnnotation, 'id' | 'pageNumber' | 'layer'>,
+    annotation: Omit<ShapeAnnotation, 'id' | 'pageId' | 'layer'>,
   ) => void
   onAddBlur: (
-    annotation: Omit<BlurAnnotation, 'id' | 'pageNumber' | 'layer'>,
+    annotation: Omit<BlurAnnotation, 'id' | 'pageId' | 'layer'>,
   ) => void
   onAddSignature: (
-    annotation: Omit<SignatureAnnotation, 'id' | 'pageNumber' | 'layer'>,
+    annotation: Omit<SignatureAnnotation, 'id' | 'pageId' | 'layer'>,
   ) => void
   onUpdateAnnotation: (annotation: Annotation) => void
   onSelectAnnotation: (id: string | null) => void
@@ -320,6 +340,7 @@ const textColors = [
 ]
 
 const shapeStrokeWidths = [1, 2, 3, 4, 6, 8, 12]
+const pdfSourceColors = ['#ff5a45', '#2563eb', '#16a34a', '#7c3aed', '#ca8a04']
 
 const getTextRenderStyle = (
   format: TextFormat,
@@ -338,11 +359,11 @@ const getTextRenderStyle = (
 const clamp = (value: number, min = 0, max = 1) =>
   Math.min(max, Math.max(min, value))
 
-const getNextLayer = (annotations: Annotation[], pageNumber: number) =>
+const getNextLayer = (annotations: Annotation[], pageId: string) =>
   Math.max(
     0,
     ...annotations
-      .filter((annotation) => annotation.pageNumber === pageNumber)
+      .filter((annotation) => annotation.pageId === pageId)
       .map((annotation) => annotation.layer),
   ) + 1
 
@@ -1126,7 +1147,10 @@ function SignatureMark({
 
 function PdfPage({
   pdfDocument,
-  pageNumber,
+  sourcePageNumber,
+  pageId,
+  displayPageNumber,
+  sourceName,
   activeTool,
   textFormat,
   shapeFormat,
@@ -1155,7 +1179,7 @@ function PdfPage({
   useEffect(() => {
     let cancelled = false
 
-    void pdfDocument.getPage(pageNumber).then((page) => {
+    void pdfDocument.getPage(sourcePageNumber).then((page) => {
       if (cancelled) return
       const viewport = page.getViewport({ scale: 1 })
       setAspectRatio(viewport.width / viewport.height)
@@ -1166,7 +1190,7 @@ function PdfPage({
     return () => {
       cancelled = true
     }
-  }, [pageNumber, pdfDocument])
+  }, [sourcePageNumber, pdfDocument])
 
   useEffect(() => {
     if (!pdfPage || !pageRef.current || !canvasRef.current) return
@@ -1266,7 +1290,7 @@ function PdfPage({
     onSelectAnnotation(null)
     onTextDraftChange({
       annotationId: null,
-      pageNumber,
+      pageId,
       x: Math.min(point.x, 0.72),
       y: Math.min(point.y, 0.94),
       value: '',
@@ -1454,7 +1478,10 @@ function PdfPage({
     .join(' ')
 
   return (
-    <section className="editor-page-wrap" aria-label={`Página ${pageNumber}`}>
+    <section
+      className="editor-page-wrap"
+      aria-label={`Página ${displayPageNumber} de ${sourceName}`}
+    >
       <div
         ref={pageRef}
         className={pageClassName}
@@ -1561,7 +1588,7 @@ function PdfPage({
             </button>
           ))}
 
-        {textDraft?.pageNumber === pageNumber && (
+        {textDraft?.pageId === pageId && (
           <Input
             autoFocus
             className="text-draft"
@@ -1607,15 +1634,93 @@ function PdfPage({
         )}
       </div>
       <Badge variant="secondary" className="editor-page-number">
-        Página {pageNumber}
+        Página {displayPageNumber}
       </Badge>
+      <span className="editor-page-source" title={sourceName}>
+        {sourceName} · pág. original {sourcePageNumber}
+      </span>
     </section>
   )
 }
 
-export function PdfEditor({ file }: { file: File }) {
-  const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null)
+function PdfPageThumbnail({
+  document,
+  pageNumber,
+}: {
+  document: PDFDocumentProxy
+  pageNumber: number
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    let renderTask: RenderTask | null = null
+
+    void document.getPage(pageNumber).then((page) => {
+      if (cancelled || !canvasRef.current) return
+
+      const canvas = canvasRef.current
+      const baseViewport = page.getViewport({ scale: 1 })
+      const viewport = page.getViewport({ scale: 150 / baseViewport.width })
+      const outputScale = Math.min(window.devicePixelRatio || 1, 1.5)
+
+      canvas.width = Math.floor(viewport.width * outputScale)
+      canvas.height = Math.floor(viewport.height * outputScale)
+      canvas.style.aspectRatio = `${viewport.width} / ${viewport.height}`
+
+      renderTask = page.render({
+        canvas,
+        viewport,
+        transform:
+          outputScale === 1
+            ? undefined
+            : [outputScale, 0, 0, outputScale, 0, 0],
+      })
+
+      void renderTask.promise.catch((renderError: unknown) => {
+        if (
+          renderError instanceof Error &&
+          renderError.name !== 'RenderingCancelledException'
+        ) {
+          console.error(renderError)
+        }
+      })
+    })
+
+    return () => {
+      cancelled = true
+      renderTask?.cancel()
+    }
+  }, [document, pageNumber])
+
+  return <canvas ref={canvasRef} className="organizer-thumbnail" />
+}
+
+export function PdfEditor({
+  initialFile,
+  onSummaryChange,
+}: {
+  initialFile: File
+  onSummaryChange?: (summary: {
+    fileCount: number
+    pageCount: number
+    totalSize: number
+  }) => void
+}) {
+  const addPdfInputRef = useRef<HTMLInputElement>(null)
+  const additionalLoadingTasksRef = useRef<Set<PDFDocumentLoadingTask>>(new Set())
+  const isMountedRef = useRef(true)
+  const [pdfSources, setPdfSources] = useState<PdfSource[]>([])
+  const [orderedPages, setOrderedPages] = useState<PdfPageReference[]>([])
   const [loadError, setLoadError] = useState('')
+  const [organizerError, setOrganizerError] = useState('')
+  const [organizerOpen, setOrganizerOpen] = useState(false)
+  const [isAddingPdfs, setIsAddingPdfs] = useState(false)
+  const [draggedPageId, setDraggedPageId] = useState<string | null>(null)
+  const [dropTargetPageId, setDropTargetPageId] = useState<string | null>(null)
+  const [selectedPageId, setSelectedPageId] = useState<string | null>(null)
+  const [targetPosition, setTargetPosition] = useState('1')
+  const [organizerAnnouncement, setOrganizerAnnouncement] = useState('')
   const [activeTool, setActiveTool] = useState<EditorTool>(null)
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null)
@@ -1635,11 +1740,32 @@ export function PdfEditor({ file }: { file: File }) {
     let loadingTask: PDFDocumentLoadingTask | null = null
 
     const loadPdf = async () => {
-      const buffer = await file.arrayBuffer()
+      const buffer = await initialFile.arrayBuffer()
+      if (cancelled) return
+
       loadingTask = getDocument({ data: new Uint8Array(buffer) })
       const document = await loadingTask.promise
 
-      if (!cancelled) setPdfDocument(document)
+      if (cancelled) {
+        await loadingTask.destroy()
+        return
+      }
+
+      const sourceId = crypto.randomUUID()
+      const source: PdfSource = {
+        id: sourceId,
+        file: initialFile,
+        document,
+      }
+      const pages = Array.from({ length: document.numPages }, (_, index) => ({
+        id: crypto.randomUUID(),
+        sourceId,
+        sourcePageNumber: index + 1,
+      }))
+
+      setPdfSources([source])
+      setOrderedPages(pages)
+      setSelectedPageId(pages[0]?.id ?? null)
     }
 
     void loadPdf().catch(() => {
@@ -1652,7 +1778,192 @@ export function PdfEditor({ file }: { file: File }) {
       cancelled = true
       void loadingTask?.destroy()
     }
-  }, [file])
+  }, [initialFile])
+
+  useEffect(() => {
+    isMountedRef.current = true
+    const loadingTasks = additionalLoadingTasksRef.current
+
+    return () => {
+      isMountedRef.current = false
+      loadingTasks.forEach((task) => {
+        void task.destroy()
+      })
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!pdfSources.length) return
+    onSummaryChange?.({
+      fileCount: pdfSources.length,
+      pageCount: orderedPages.length,
+      totalSize: pdfSources.reduce(
+        (total, source) => total + source.file.size,
+        0,
+      ),
+    })
+  }, [onSummaryChange, orderedPages.length, pdfSources])
+
+  const sourcesById = new Map(
+    pdfSources.map((source) => [source.id, source]),
+  )
+  const selectedOrganizerPage = orderedPages.find(
+    (page) => page.id === selectedPageId,
+  )
+  const selectedOrganizerIndex = selectedOrganizerPage
+    ? orderedPages.findIndex((page) => page.id === selectedOrganizerPage.id)
+    : -1
+
+  const selectOrganizerPage = (pageId: string) => {
+    const pageIndex = orderedPages.findIndex((page) => page.id === pageId)
+    setSelectedPageId(pageId)
+    setTargetPosition(String(Math.max(pageIndex + 1, 1)))
+  }
+
+  const addPdfFiles = async (files: File[]) => {
+    if (!files.length || isAddingPdfs) return
+
+    const validFiles = files.filter(
+      (file) =>
+        file.type === 'application/pdf' ||
+        file.name.toLowerCase().endsWith('.pdf'),
+    )
+    const invalidFiles = files.filter((file) => !validFiles.includes(file))
+
+    setOrganizerError('')
+    if (!validFiles.length) {
+      setOrganizerError('Selecciona uno o varios archivos PDF válidos.')
+      return
+    }
+
+    setIsAddingPdfs(true)
+
+    const results = await Promise.allSettled(
+      validFiles.map(async (file) => {
+        const sourceId = crypto.randomUUID()
+        const buffer = await file.arrayBuffer()
+        const loadingTask = getDocument({ data: new Uint8Array(buffer) })
+        additionalLoadingTasksRef.current.add(loadingTask)
+
+        try {
+          const document = await loadingTask.promise
+          if (!isMountedRef.current) {
+            throw new Error('Editor cerrado')
+          }
+
+          return {
+            source: { id: sourceId, file, document } satisfies PdfSource,
+            pages: Array.from({ length: document.numPages }, (_, index) => ({
+              id: crypto.randomUUID(),
+              sourceId,
+              sourcePageNumber: index + 1,
+            })),
+          }
+        } catch (error) {
+          additionalLoadingTasksRef.current.delete(loadingTask)
+          void loadingTask.destroy()
+          throw error
+        }
+      }),
+    )
+
+    if (!isMountedRef.current) return
+
+    const loaded = results.flatMap((result) =>
+      result.status === 'fulfilled' ? [result.value] : [],
+    )
+    const failedNames = validFiles.flatMap((file, index) =>
+      results[index]?.status === 'rejected' ? [file.name] : [],
+    )
+
+    if (loaded.length) {
+      const newPages = loaded.flatMap((result) => result.pages)
+      setPdfSources((current) => [
+        ...current,
+        ...loaded.map((result) => result.source),
+      ])
+      setOrderedPages((current) => [...current, ...newPages])
+      setSelectedPageId(newPages[0]?.id ?? selectedPageId)
+      setTargetPosition(String(orderedPages.length + 1))
+      setOrganizerAnnouncement(
+        `${loaded.length} ${loaded.length === 1 ? 'PDF agregado' : 'PDFs agregados'} al final del documento.`,
+      )
+    }
+
+    const rejectedNames = [...invalidFiles.map((file) => file.name), ...failedNames]
+    if (rejectedNames.length) {
+      setOrganizerError(
+        `No se ${rejectedNames.length === 1 ? 'pudo abrir' : 'pudieron abrir'}: ${rejectedNames.join(', ')}. Los demás documentos se conservaron.`,
+      )
+    }
+
+    setIsAddingPdfs(false)
+  }
+
+  const handleAdditionalPdfChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? [])
+    event.target.value = ''
+    void addPdfFiles(files)
+  }
+
+  const handleOrganizerOpenChange = (open: boolean) => {
+    if (!open && isAddingPdfs) return
+    setOrganizerOpen(open)
+  }
+
+  const movePage = (pageId: string, requestedPosition: number) => {
+    const fromIndex = orderedPages.findIndex((page) => page.id === pageId)
+    if (fromIndex < 0 || !Number.isFinite(requestedPosition)) return
+
+    const toIndex = Math.max(
+      0,
+      Math.min(orderedPages.length - 1, Math.trunc(requestedPosition) - 1),
+    )
+    const page = orderedPages[fromIndex]
+    if (!page) return
+
+    setOrderedPages((current) => {
+      const currentFromIndex = current.findIndex((item) => item.id === pageId)
+      if (currentFromIndex < 0) return current
+
+      const next = [...current]
+      const [movedPage] = next.splice(currentFromIndex, 1)
+      if (!movedPage) return current
+      next.splice(toIndex, 0, movedPage)
+      return next
+    })
+
+    const source = sourcesById.get(page.sourceId)
+    const finalPosition = toIndex + 1
+    setSelectedPageId(pageId)
+    setTargetPosition(String(finalPosition))
+    setOrganizerAnnouncement(
+      `${source?.file.name ?? 'Página'}, página original ${page.sourcePageNumber}, movida a la posición ${finalPosition}.`,
+    )
+  }
+
+  const moveSelectedPage = (position: number) => {
+    if (!selectedPageId) return
+    movePage(selectedPageId, position)
+  }
+
+  const handlePageDrop = (
+    event: ReactDragEvent<HTMLElement>,
+    targetPageId: string,
+  ) => {
+    event.preventDefault()
+    const pageId = draggedPageId ?? event.dataTransfer.getData('text/plain')
+    const targetIndex = orderedPages.findIndex(
+      (page) => page.id === targetPageId,
+    )
+
+    if (pageId && targetIndex >= 0 && pageId !== targetPageId) {
+      movePage(pageId, targetIndex + 1)
+    }
+
+    setDraggedPageId(null)
+    setDropTargetPageId(null)
+  }
 
   const selectedAnnotation = annotations.find(
     (annotation) => annotation.id === selectedAnnotationId,
@@ -1792,13 +2103,13 @@ export function PdfEditor({ file }: { file: File }) {
         ...current,
         {
           id: annotationId,
-          pageNumber: draft.pageNumber,
+          pageId: draft.pageId,
           type: 'text',
           x: draft.x,
           y: draft.y,
           text,
           format: draft.format,
-          layer: getNextLayer(current, draft.pageNumber),
+          layer: getNextLayer(current, draft.pageId),
         },
       ])
       setSelectedAnnotationId(annotationId)
@@ -1814,7 +2125,7 @@ export function PdfEditor({ file }: { file: File }) {
     setCurrentTextFormat(annotation.format)
     setTextDraft({
       annotationId: annotation.id,
-      pageNumber: annotation.pageNumber,
+      pageId: annotation.pageId,
       x: annotation.x,
       y: annotation.y,
       value: annotation.text,
@@ -1823,8 +2134,8 @@ export function PdfEditor({ file }: { file: File }) {
   }
 
   const addShape = (
-    pageNumber: number,
-    shape: Omit<ShapeAnnotation, 'id' | 'pageNumber' | 'layer'>,
+    pageId: string,
+    shape: Omit<ShapeAnnotation, 'id' | 'pageId' | 'layer'>,
   ) => {
     const annotationId = crypto.randomUUID()
     setAnnotations((current) => [
@@ -1832,8 +2143,8 @@ export function PdfEditor({ file }: { file: File }) {
       {
         ...shape,
         id: annotationId,
-        pageNumber,
-        layer: getNextLayer(current, pageNumber),
+        pageId,
+        layer: getNextLayer(current, pageId),
       },
     ])
     setSelectedAnnotationId(annotationId)
@@ -1842,8 +2153,8 @@ export function PdfEditor({ file }: { file: File }) {
   }
 
   const addBlur = (
-    pageNumber: number,
-    blur: Omit<BlurAnnotation, 'id' | 'pageNumber' | 'layer'>,
+    pageId: string,
+    blur: Omit<BlurAnnotation, 'id' | 'pageId' | 'layer'>,
   ) => {
     const annotationId = crypto.randomUUID()
     setAnnotations((current) => [
@@ -1851,8 +2162,8 @@ export function PdfEditor({ file }: { file: File }) {
       {
         ...blur,
         id: annotationId,
-        pageNumber,
-        layer: getNextLayer(current, pageNumber),
+        pageId,
+        layer: getNextLayer(current, pageId),
       },
     ])
     setSelectedAnnotationId(annotationId)
@@ -1861,8 +2172,8 @@ export function PdfEditor({ file }: { file: File }) {
   }
 
   const addSignature = (
-    pageNumber: number,
-    signature: Omit<SignatureAnnotation, 'id' | 'pageNumber' | 'layer'>,
+    pageId: string,
+    signature: Omit<SignatureAnnotation, 'id' | 'pageId' | 'layer'>,
   ) => {
     const annotationId = crypto.randomUUID()
     setAnnotations((current) => [
@@ -1870,8 +2181,8 @@ export function PdfEditor({ file }: { file: File }) {
       {
         ...signature,
         id: annotationId,
-        pageNumber,
-        layer: getNextLayer(current, pageNumber),
+        pageId,
+        layer: getNextLayer(current, pageId),
       },
     ])
     setSelectedAnnotationId(annotationId)
@@ -1893,7 +2204,7 @@ export function PdfEditor({ file }: { file: File }) {
     setAnnotations((current) => {
       const pageAnnotations = current
         .filter(
-          (annotation) => annotation.pageNumber === selectedArea.pageNumber,
+          (annotation) => annotation.pageId === selectedArea.pageId,
         )
         .sort((first, second) => first.layer - second.layer)
       const currentIndex = pageAnnotations.findIndex(
@@ -1922,7 +2233,7 @@ export function PdfEditor({ file }: { file: File }) {
       )
 
       return current.map((annotation) =>
-        annotation.pageNumber === selectedArea.pageNumber
+        annotation.pageId === selectedArea.pageId
           ? {
               ...annotation,
               layer: layersById.get(annotation.id) ?? annotation.layer,
@@ -1945,6 +2256,241 @@ export function PdfEditor({ file }: { file: File }) {
     <div
       className={`pdf-editor ${showTextFormatter || showShapeFormatter || showBlurFormatter || showSignatureFormatter ? 'pdf-editor--context-format' : ''}`}
     >
+      <Dialog open={organizerOpen} onOpenChange={handleOrganizerOpenChange}>
+        <DialogContent className="page-organizer-dialog sm:max-w-5xl">
+          <input
+            ref={addPdfInputRef}
+            className="sr-only"
+            type="file"
+            accept="application/pdf,.pdf"
+            multiple
+            onChange={handleAdditionalPdfChange}
+            aria-label="Seleccionar PDFs para unir"
+          />
+
+          <DialogHeader>
+            <DialogTitle>Unir y organizar páginas</DialogTitle>
+            <DialogDescription>
+              Añade uno o varios PDFs y define el orden final de todas sus páginas.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="page-organizer-summary">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary" className="rounded-full">
+                {pdfSources.length}{' '}
+                {pdfSources.length === 1 ? 'archivo' : 'archivos'}
+              </Badge>
+              <Badge variant="outline" className="rounded-full">
+                {orderedPages.length}{' '}
+                {orderedPages.length === 1 ? 'página' : 'páginas'}
+              </Badge>
+              <span className="text-xs text-slate-500">
+                Arrastra o usa los controles de posición. Los cambios se aplican
+                al instante.
+              </span>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isAddingPdfs}
+              onClick={() => addPdfInputRef.current?.click()}
+            >
+              {isAddingPdfs ? (
+                <LoaderCircle className="animate-spin" data-icon="inline-start" />
+              ) : (
+                <UploadCloud data-icon="inline-start" />
+              )}
+              {isAddingPdfs ? 'Agregando…' : 'Agregar PDFs'}
+            </Button>
+          </div>
+
+          {organizerError && (
+            <div className="page-organizer-error" role="alert">
+              <FileText aria-hidden="true" />
+              <span>{organizerError}</span>
+            </div>
+          )}
+
+          <div className="page-organizer-scroll">
+            <div className="page-organizer-grid">
+              {orderedPages.map((page, index) => {
+                const source = sourcesById.get(page.sourceId)
+                if (!source) return null
+                const sourceIndex = pdfSources.findIndex(
+                  (item) => item.id === source.id,
+                )
+                const isSelected = page.id === selectedPageId
+                const isDropTarget = page.id === dropTargetPageId
+
+                return (
+                  <article
+                    key={page.id}
+                    className={[
+                      'page-organizer-card',
+                      isSelected && 'page-organizer-card--selected',
+                      draggedPageId === page.id &&
+                        'page-organizer-card--dragging',
+                      isDropTarget && 'page-organizer-card--drop-target',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    onDragOver={(event) => {
+                      event.preventDefault()
+                      if (draggedPageId && draggedPageId !== page.id) {
+                        setDropTargetPageId(page.id)
+                      }
+                    }}
+                    onDragLeave={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                        setDropTargetPageId((current) =>
+                          current === page.id ? null : current,
+                        )
+                      }
+                    }}
+                    onDrop={(event) => handlePageDrop(event, page.id)}
+                  >
+                    <div className="page-organizer-card-header">
+                      <Badge className="page-position-badge">{index + 1}</Badge>
+                      <button
+                        type="button"
+                        className="page-drag-handle"
+                        draggable
+                        onDragStart={(event) => {
+                          event.dataTransfer.effectAllowed = 'move'
+                          event.dataTransfer.setData('text/plain', page.id)
+                          setDraggedPageId(page.id)
+                          selectOrganizerPage(page.id)
+                        }}
+                        onClick={() => selectOrganizerPage(page.id)}
+                        onDragEnd={() => {
+                          setDraggedPageId(null)
+                          setDropTargetPageId(null)
+                        }}
+                        aria-label={`Seleccionar página ${index + 1} para moverla`}
+                        title="Arrastra o selecciona y usa los controles inferiores"
+                      >
+                        <GripVertical aria-hidden="true" />
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="page-organizer-preview"
+                      onClick={() => selectOrganizerPage(page.id)}
+                      aria-pressed={isSelected}
+                      aria-label={`Seleccionar página ${index + 1}, página original ${page.sourcePageNumber} de ${source.file.name}`}
+                    >
+                      <PdfPageThumbnail
+                        document={source.document}
+                        pageNumber={page.sourcePageNumber}
+                      />
+                    </button>
+
+                    <div className="page-organizer-card-footer">
+                      <span
+                        className="page-source-dot"
+                        style={{
+                          backgroundColor:
+                            pdfSourceColors[
+                              Math.max(sourceIndex, 0) % pdfSourceColors.length
+                            ],
+                        }}
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0">
+                        <strong title={source.file.name}>{source.file.name}</strong>
+                        <small>Pág. original {page.sourcePageNumber}</small>
+                      </span>
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+          </div>
+
+          <p className="sr-only" aria-live="polite">
+            {organizerAnnouncement}
+          </p>
+
+          <DialogFooter className="page-organizer-footer sm:justify-between">
+            <div className="page-organizer-actions">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={selectedOrganizerIndex <= 0}
+                onClick={() => moveSelectedPage(1)}
+              >
+                Al inicio
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={selectedOrganizerIndex <= 0}
+                onClick={() => moveSelectedPage(selectedOrganizerIndex)}
+              >
+                Anterior
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={
+                  selectedOrganizerIndex < 0 ||
+                  selectedOrganizerIndex >= orderedPages.length - 1
+                }
+                onClick={() => moveSelectedPage(selectedOrganizerIndex + 2)}
+              >
+                Siguiente
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={
+                  selectedOrganizerIndex < 0 ||
+                  selectedOrganizerIndex >= orderedPages.length - 1
+                }
+                onClick={() => moveSelectedPage(orderedPages.length)}
+              >
+                Al final
+              </Button>
+              <label className="page-position-control">
+                <span>Posición</span>
+                <Input
+                  type="number"
+                  min={1}
+                  max={orderedPages.length}
+                  inputMode="numeric"
+                  value={targetPosition}
+                  onChange={(event) => setTargetPosition(event.target.value)}
+                  aria-label="Nueva posición de la página"
+                />
+              </label>
+              <Button
+                type="button"
+                size="sm"
+                disabled={!selectedPageId || !targetPosition}
+                onClick={() => moveSelectedPage(Number(targetPosition))}
+              >
+                Mover
+              </Button>
+            </div>
+            <Button
+              type="button"
+              disabled={isAddingPdfs}
+              onClick={() => setOrganizerOpen(false)}
+            >
+              <Check data-icon="inline-start" />
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={signatureDialogOpen} onOpenChange={setSignatureDialogOpen}>
         <DialogContent className="signature-dialog sm:max-w-2xl">
           <DialogHeader>
@@ -2051,6 +2597,21 @@ export function PdfEditor({ file }: { file: File }) {
           >
             <SignatureIcon data-icon="inline-start" />
             Firma
+          </Button>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setActiveTool(null)
+              setSelectedAnnotationId(null)
+              setTextDraft(null)
+              setOrganizerOpen(true)
+            }}
+            disabled={!orderedPages.length}
+          >
+            <Files data-icon="inline-start" />
+            Unir y ordenar
           </Button>
 
           <Separator orientation="vertical" className="mx-1 h-6" />
@@ -2649,10 +3210,10 @@ export function PdfEditor({ file }: { file: File }) {
       )}
 
       <div className="editor-canvas-area">
-        {!pdfDocument && !loadError && (
+        {!pdfSources.length && !loadError && (
           <div className="editor-state">
             <LoaderCircle className="size-7 animate-spin text-[#ff5a45]" aria-hidden="true" />
-            <p>Preparando las páginas…</p>
+            <p>Preparando el documento…</p>
           </div>
         )}
 
@@ -2663,32 +3224,37 @@ export function PdfEditor({ file }: { file: File }) {
           </div>
         )}
 
-        {pdfDocument && (
+        {pdfSources.length > 0 && (
           <div className="pdf-pages">
-            {Array.from({ length: pdfDocument.numPages }, (_, index) => {
-              const pageNumber = index + 1
+            {orderedPages.map((page, index) => {
+              const source = sourcesById.get(page.sourceId)
+              if (!source) return null
+
               return (
                 <PdfPage
-                  key={pageNumber}
-                  pdfDocument={pdfDocument}
-                  pageNumber={pageNumber}
+                  key={page.id}
+                  pdfDocument={source.document}
+                  sourcePageNumber={page.sourcePageNumber}
+                  pageId={page.id}
+                  displayPageNumber={index + 1}
+                  sourceName={source.file.name}
                   activeTool={activeTool}
                   textFormat={activeTextFormat}
                   shapeFormat={activeShapeFormat}
                   blurFormat={activeBlurFormat}
                   signatureTemplate={signatureTemplate}
                   annotations={annotations.filter(
-                    (annotation) => annotation.pageNumber === pageNumber,
+                    (annotation) => annotation.pageId === page.id,
                   )}
                   selectedAnnotationId={selectedAnnotationId}
                   textDraft={textDraft}
                   onTextDraftChange={setTextDraft}
                   onCommitText={commitText}
                   onEditText={editText}
-                  onAddShape={(shape) => addShape(pageNumber, shape)}
-                  onAddBlur={(blur) => addBlur(pageNumber, blur)}
+                  onAddShape={(shape) => addShape(page.id, shape)}
+                  onAddBlur={(blur) => addBlur(page.id, blur)}
                   onAddSignature={(signature) =>
-                    addSignature(pageNumber, signature)
+                    addSignature(page.id, signature)
                   }
                   onUpdateAnnotation={updateAnnotation}
                   onSelectAnnotation={selectAnnotation}
@@ -2701,8 +3267,8 @@ export function PdfEditor({ file }: { file: File }) {
 
       <div className="editor-statusbar">
         <span>
-          {pdfDocument
-            ? `${pdfDocument.numPages} ${pdfDocument.numPages === 1 ? 'página' : 'páginas'}`
+          {pdfSources.length
+            ? `${orderedPages.length} ${orderedPages.length === 1 ? 'página' : 'páginas'} · ${pdfSources.length} ${pdfSources.length === 1 ? 'PDF' : 'PDFs'}`
             : 'Cargando PDF'}
         </span>
         <span>

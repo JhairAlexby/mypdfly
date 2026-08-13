@@ -5,6 +5,7 @@ import type {
   PointerEvent as ReactPointerEvent,
 } from 'react'
 import {
+  Blend,
   Bold,
   ChevronDown,
   ChevronsDown,
@@ -67,7 +68,7 @@ import { Slider } from '@/components/ui/slider'
 GlobalWorkerOptions.workerSrc = pdfWorker
 
 type ShapeTool = 'rectangle' | 'circle' | 'triangle' | 'line'
-type EditorTool = 'text' | ShapeTool | null
+type EditorTool = 'text' | 'blur' | ShapeTool | null
 type ResizeHandle = 'nw' | 'ne' | 'sw' | 'se' | 'start' | 'end'
 type LayerAction = 'front' | 'forward' | 'backward' | 'back'
 type TextFontFamily = 'helvetica' | 'times' | 'georgia' | 'courier' | 'verdana'
@@ -85,6 +86,10 @@ type ShapeFormat = {
   color: string
   opacity: number
   strokeWidth: number
+}
+
+type BlurFormat = {
+  intensity: number
 }
 
 type Point = {
@@ -113,7 +118,18 @@ type ShapeAnnotation = {
   layer: number
 }
 
-type Annotation = TextAnnotation | ShapeAnnotation
+type BlurAnnotation = {
+  id: string
+  pageNumber: number
+  type: 'blur'
+  start: Point
+  end: Point
+  format: BlurFormat
+  layer: number
+}
+
+type AreaAnnotation = ShapeAnnotation | BlurAnnotation
+type Annotation = TextAnnotation | AreaAnnotation
 
 type TextDraft = {
   annotationId: string | null
@@ -131,15 +147,24 @@ type ShapeDraft = {
   format: ShapeFormat
 }
 
+type BlurDraft = {
+  type: 'blur'
+  start: Point
+  end: Point
+  format: BlurFormat
+}
+
+type AreaDraft = ShapeDraft | BlurDraft
+
 type AnnotationInteraction =
   | {
-      kind: 'shape-move'
-      annotation: ShapeAnnotation
+      kind: 'area-move'
+      annotation: AreaAnnotation
       origin: Point
     }
   | {
-      kind: 'shape-resize'
-      annotation: ShapeAnnotation
+      kind: 'area-resize'
+      annotation: AreaAnnotation
       handle: ResizeHandle
     }
   | {
@@ -154,6 +179,7 @@ type PdfPageProps = {
   activeTool: EditorTool
   textFormat: TextFormat
   shapeFormat: ShapeFormat
+  blurFormat: BlurFormat
   annotations: Annotation[]
   selectedAnnotationId: string | null
   textDraft: TextDraft | null
@@ -163,12 +189,16 @@ type PdfPageProps = {
   onAddShape: (
     annotation: Omit<ShapeAnnotation, 'id' | 'pageNumber' | 'layer'>,
   ) => void
+  onAddBlur: (
+    annotation: Omit<BlurAnnotation, 'id' | 'pageNumber' | 'layer'>,
+  ) => void
   onUpdateAnnotation: (annotation: Annotation) => void
   onSelectAnnotation: (id: string | null) => void
 }
 
 const toolLabels: Record<Exclude<EditorTool, null>, string> = {
   text: 'Texto',
+  blur: 'Difuminar',
   rectangle: 'Rectángulo',
   circle: 'Círculo',
   triangle: 'Triángulo',
@@ -199,6 +229,10 @@ const defaultShapeFormat: ShapeFormat = {
   color: '#ff5a45',
   opacity: 1,
   strokeWidth: 4,
+}
+
+const defaultBlurFormat: BlurFormat = {
+  intensity: 12,
 }
 
 const fontFamilies: Array<{
@@ -253,6 +287,19 @@ const getNextLayer = (annotations: Annotation[], pageNumber: number) =>
       .map((annotation) => annotation.layer),
   ) + 1
 
+const isTextAnnotation = (
+  annotation: Annotation,
+): annotation is TextAnnotation => annotation.type === 'text'
+
+const isShapeAnnotation = (
+  annotation: Annotation,
+): annotation is ShapeAnnotation =>
+  annotation.type !== 'text' && annotation.type !== 'blur'
+
+const isBlurAnnotation = (
+  annotation: Annotation,
+): annotation is BlurAnnotation => annotation.type === 'blur'
+
 const getPoint = (
   event: Pick<ReactPointerEvent<Element> | ReactMouseEvent<Element>, 'clientX' | 'clientY'>,
   element: HTMLDivElement,
@@ -265,18 +312,18 @@ const getPoint = (
   }
 }
 
-const normalizeShape = (shape: ShapeDraft): ShapeDraft => {
-  if (shape.type === 'line') return shape
+const normalizeArea = (area: AreaDraft): AreaDraft => {
+  if (area.type === 'line') return area
 
   return {
-    ...shape,
+    ...area,
     start: {
-      x: Math.min(shape.start.x, shape.end.x),
-      y: Math.min(shape.start.y, shape.end.y),
+      x: Math.min(area.start.x, area.end.x),
+      y: Math.min(area.start.y, area.end.y),
     },
     end: {
-      x: Math.max(shape.start.x, shape.end.x),
-      y: Math.max(shape.start.y, shape.end.y),
+      x: Math.max(area.start.x, area.end.x),
+      y: Math.max(area.start.y, area.end.y),
     },
   }
 }
@@ -438,12 +485,95 @@ function ShapeMark({
   )
 }
 
+function BlurMark({
+  annotation,
+  isSelected = false,
+  isDraft = false,
+  onMoveStart,
+  onResizeStart,
+}: {
+  annotation: BlurAnnotation | BlurDraft
+  isSelected?: boolean
+  isDraft?: boolean
+  onMoveStart?: (
+    event: ReactPointerEvent<HTMLDivElement>,
+    annotation: BlurAnnotation,
+  ) => void
+  onResizeStart?: (
+    event: ReactPointerEvent<HTMLSpanElement>,
+    annotation: BlurAnnotation,
+    handle: ResizeHandle,
+  ) => void
+}) {
+  const savedAnnotation = 'id' in annotation ? annotation : null
+  const x = Math.min(annotation.start.x, annotation.end.x)
+  const y = Math.min(annotation.start.y, annotation.end.y)
+  const width = Math.abs(annotation.end.x - annotation.start.x)
+  const height = Math.abs(annotation.end.y - annotation.start.y)
+
+  const handleMoveStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!savedAnnotation) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    onMoveStart?.(event, savedAnnotation)
+  }
+
+  const handleResizeStart = (
+    event: ReactPointerEvent<HTMLSpanElement>,
+    handle: ResizeHandle,
+  ) => {
+    if (!savedAnnotation) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    onResizeStart?.(event, savedAnnotation, handle)
+  }
+
+  return (
+    <div
+      className={[
+        'blur-annotation',
+        isSelected && 'blur-annotation--selected',
+        isDraft && 'blur-annotation--draft',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      style={{
+        left: `${x * 100}%`,
+        top: `${y * 100}%`,
+        width: `${width * 100}%`,
+        height: `${height * 100}%`,
+        zIndex: savedAnnotation?.layer ?? 10000,
+        backdropFilter: `blur(${annotation.format.intensity}px)`,
+        WebkitBackdropFilter: `blur(${annotation.format.intensity}px)`,
+      }}
+      onPointerDown={savedAnnotation ? handleMoveStart : undefined}
+      onClick={(event) => event.stopPropagation()}
+      title={savedAnnotation ? 'Arrastra para mover el área difuminada' : undefined}
+    >
+      {isDraft && <span className="blur-draft-label">Difuminar</span>}
+      {isSelected &&
+        (['nw', 'ne', 'sw', 'se'] as const).map((handle) => (
+          <span
+            key={handle}
+            className={`blur-resize-handle blur-resize-handle--${handle}`}
+            onPointerDown={(event) => handleResizeStart(event, handle)}
+            onClick={(event) => event.stopPropagation()}
+            aria-hidden="true"
+          />
+        ))}
+    </div>
+  )
+}
+
 function PdfPage({
   pdfDocument,
   pageNumber,
   activeTool,
   textFormat,
   shapeFormat,
+  blurFormat,
   annotations,
   selectedAnnotationId,
   textDraft,
@@ -451,6 +581,7 @@ function PdfPage({
   onCommitText,
   onEditText,
   onAddShape,
+  onAddBlur,
   onUpdateAnnotation,
   onSelectAnnotation,
 }: PdfPageProps) {
@@ -459,7 +590,7 @@ function PdfPage({
   const [pdfPage, setPdfPage] = useState<PDFPageProxy | null>(null)
   const [aspectRatio, setAspectRatio] = useState(8.5 / 11)
   const [pageWidth, setPageWidth] = useState(612)
-  const [shapeDraft, setShapeDraft] = useState<ShapeDraft | null>(null)
+  const [areaDraft, setAreaDraft] = useState<AreaDraft | null>(null)
   const [interaction, setInteraction] = useState<AnnotationInteraction | null>(null)
 
   useEffect(() => {
@@ -542,12 +673,21 @@ function PdfPage({
     const point = getPoint(event, pageRef.current)
     event.currentTarget.setPointerCapture(event.pointerId)
     onSelectAnnotation(null)
-    setShapeDraft({
-      type: activeTool,
-      start: point,
-      end: point,
-      format: shapeFormat,
-    })
+    setAreaDraft(
+      activeTool === 'blur'
+        ? {
+            type: 'blur',
+            start: point,
+            end: point,
+            format: blurFormat,
+          }
+        : {
+            type: activeTool,
+            start: point,
+            end: point,
+            format: shapeFormat,
+          },
+    )
   }
 
   const handlePageClick = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -565,27 +705,27 @@ function PdfPage({
     })
   }
 
-  const startShapeMove = (
-    event: ReactPointerEvent<SVGElement>,
-    annotation: ShapeAnnotation,
+  const startAreaMove = (
+    event: ReactPointerEvent<Element>,
+    annotation: AreaAnnotation,
   ) => {
     if (!pageRef.current) return
     onSelectAnnotation(annotation.id)
     setInteraction({
-      kind: 'shape-move',
+      kind: 'area-move',
       annotation,
       origin: getPoint(event, pageRef.current),
     })
   }
 
-  const startShapeResize = (
-    _event: ReactPointerEvent<SVGElement>,
-    annotation: ShapeAnnotation,
+  const startAreaResize = (
+    _event: ReactPointerEvent<Element>,
+    annotation: AreaAnnotation,
     handle: ResizeHandle,
   ) => {
     onSelectAnnotation(annotation.id)
     setInteraction({
-      kind: 'shape-resize',
+      kind: 'area-resize',
       annotation,
       handle,
     })
@@ -607,8 +747,8 @@ function PdfPage({
     })
   }
 
-  const moveShape = (
-    interactionState: Extract<AnnotationInteraction, { kind: 'shape-move' }>,
+  const moveArea = (
+    interactionState: Extract<AnnotationInteraction, { kind: 'area-move' }>,
     point: Point,
   ) => {
     const { annotation, origin } = interactionState
@@ -632,8 +772,8 @@ function PdfPage({
     })
   }
 
-  const resizeShape = (
-    interactionState: Extract<AnnotationInteraction, { kind: 'shape-resize' }>,
+  const resizeArea = (
+    interactionState: Extract<AnnotationInteraction, { kind: 'area-resize' }>,
     point: Point,
   ) => {
     const { annotation, handle } = interactionState
@@ -683,38 +823,43 @@ function PdfPage({
     if (!pageRef.current) return
     const point = getPoint(event, pageRef.current)
 
-    if (shapeDraft) {
-      setShapeDraft({ ...shapeDraft, end: point })
+    if (areaDraft) {
+      setAreaDraft({ ...areaDraft, end: point })
       return
     }
 
     if (!interaction) return
     event.preventDefault()
 
-    if (interaction.kind === 'shape-move') moveShape(interaction, point)
-    if (interaction.kind === 'shape-resize') resizeShape(interaction, point)
+    if (interaction.kind === 'area-move') moveArea(interaction, point)
+    if (interaction.kind === 'area-resize') resizeArea(interaction, point)
     if (interaction.kind === 'text-move') moveText(interaction, point)
   }
 
   const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!pageRef.current) return
 
-    if (shapeDraft) {
+    if (areaDraft) {
       const pointerEnd = getPoint(event, pageRef.current)
       const isTiny =
-        Math.abs(pointerEnd.x - shapeDraft.start.x) < 0.015 &&
-        Math.abs(pointerEnd.y - shapeDraft.start.y) < 0.015
+        Math.abs(pointerEnd.x - areaDraft.start.x) < 0.015 &&
+        Math.abs(pointerEnd.y - areaDraft.start.y) < 0.015
       const end = isTiny
         ? {
-            x: clamp(shapeDraft.start.x + 0.18),
+            x: clamp(areaDraft.start.x + 0.18),
             y: clamp(
-              shapeDraft.start.y + (shapeDraft.type === 'line' ? 0.001 : 0.12),
+              areaDraft.start.y + (areaDraft.type === 'line' ? 0.001 : 0.12),
             ),
           }
         : pointerEnd
 
-      onAddShape(normalizeShape({ ...shapeDraft, end }))
-      setShapeDraft(null)
+      const normalizedArea = normalizeArea({ ...areaDraft, end })
+      if (normalizedArea.type === 'blur') {
+        onAddBlur(normalizedArea)
+      } else {
+        onAddShape(normalizedArea)
+      }
+      setAreaDraft(null)
     }
 
     if (interaction) setInteraction(null)
@@ -739,7 +884,7 @@ function PdfPage({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={() => {
-          setShapeDraft(null)
+          setAreaDraft(null)
           setInteraction(null)
         }}
         onClick={handlePageClick}
@@ -747,7 +892,7 @@ function PdfPage({
         <canvas ref={canvasRef} className="pdf-page-canvas" />
 
         {annotations
-          .filter((annotation): annotation is ShapeAnnotation => annotation.type !== 'text')
+          .filter(isShapeAnnotation)
           .map((annotation) => (
             <svg
               key={annotation.id}
@@ -760,13 +905,23 @@ function PdfPage({
               <ShapeMark
                 annotation={annotation}
                 isSelected={selectedAnnotationId === annotation.id}
-                onMoveStart={startShapeMove}
-                onResizeStart={startShapeResize}
+                onMoveStart={startAreaMove}
+                onResizeStart={startAreaResize}
               />
             </svg>
           ))}
 
-        {shapeDraft && (
+        {annotations.filter(isBlurAnnotation).map((annotation) => (
+          <BlurMark
+            key={annotation.id}
+            annotation={annotation}
+            isSelected={selectedAnnotationId === annotation.id}
+            onMoveStart={startAreaMove}
+            onResizeStart={startAreaResize}
+          />
+        ))}
+
+        {areaDraft && areaDraft.type !== 'blur' && (
           <svg
             className="annotation-svg"
             viewBox="0 0 1000 1000"
@@ -774,12 +929,16 @@ function PdfPage({
             style={{ zIndex: 10000 }}
             aria-hidden="true"
           >
-            <ShapeMark annotation={shapeDraft} isDraft />
+            <ShapeMark annotation={areaDraft} isDraft />
           </svg>
         )}
 
+        {areaDraft?.type === 'blur' && (
+          <BlurMark annotation={areaDraft} isDraft />
+        )}
+
         {annotations
-          .filter((annotation): annotation is TextAnnotation => annotation.type === 'text')
+          .filter(isTextAnnotation)
           .map((annotation) => (
             <button
               key={annotation.id}
@@ -870,6 +1029,8 @@ export function PdfEditor({ file }: { file: File }) {
     useState<TextFormat>(defaultTextFormat)
   const [currentShapeFormat, setCurrentShapeFormat] =
     useState<ShapeFormat>(defaultShapeFormat)
+  const [currentBlurFormat, setCurrentBlurFormat] =
+    useState<BlurFormat>(defaultBlurFormat)
 
   useEffect(() => {
     let cancelled = false
@@ -901,16 +1062,21 @@ export function PdfEditor({ file }: { file: File }) {
   const selectedText =
     selectedAnnotation?.type === 'text' ? selectedAnnotation : null
   const selectedShape =
-    selectedAnnotation && selectedAnnotation.type !== 'text'
+    selectedAnnotation && isShapeAnnotation(selectedAnnotation)
       ? selectedAnnotation
       : null
+  const selectedBlur =
+    selectedAnnotation?.type === 'blur' ? selectedAnnotation : null
   const activeTextFormat =
     textDraft?.format ?? selectedText?.format ?? currentTextFormat
   const activeShapeFormat = selectedShape?.format ?? currentShapeFormat
+  const activeBlurFormat = selectedBlur?.format ?? currentBlurFormat
   const showTextFormatter =
     activeTool === 'text' || Boolean(textDraft) || Boolean(selectedText)
-  const shapeToolActive = activeTool !== null && activeTool !== 'text'
+  const shapeToolActive =
+    activeTool !== null && activeTool !== 'text' && activeTool !== 'blur'
   const showShapeFormatter = shapeToolActive || Boolean(selectedShape)
+  const showBlurFormatter = activeTool === 'blur' || Boolean(selectedBlur)
 
   const selectAnnotation = (id: string | null) => {
     setSelectedAnnotationId(id)
@@ -919,6 +1085,8 @@ export function PdfEditor({ file }: { file: File }) {
     const annotation = annotations.find((item) => item.id === id)
     if (annotation?.type === 'text') {
       setCurrentTextFormat(annotation.format)
+    } else if (annotation?.type === 'blur') {
+      setCurrentBlurFormat(annotation.format)
     } else if (annotation) {
       setCurrentShapeFormat(annotation.format)
     }
@@ -952,7 +1120,24 @@ export function PdfEditor({ file }: { file: File }) {
     if (selectedShape) {
       setAnnotations((current) =>
         current.map((annotation) =>
-          annotation.id === selectedShape.id && annotation.type !== 'text'
+          annotation.id === selectedShape.id && isShapeAnnotation(annotation)
+            ? {
+                ...annotation,
+                format: { ...annotation.format, ...patch },
+              }
+            : annotation,
+        ),
+      )
+    }
+  }
+
+  const applyBlurFormat = (patch: Partial<BlurFormat>) => {
+    setCurrentBlurFormat((current) => ({ ...current, ...patch }))
+
+    if (selectedBlur) {
+      setAnnotations((current) =>
+        current.map((annotation) =>
+          annotation.id === selectedBlur.id && annotation.type === 'blur'
             ? {
                 ...annotation,
                 format: { ...annotation.format, ...patch },
@@ -1037,6 +1222,25 @@ export function PdfEditor({ file }: { file: File }) {
     setActiveTool(null)
   }
 
+  const addBlur = (
+    pageNumber: number,
+    blur: Omit<BlurAnnotation, 'id' | 'pageNumber' | 'layer'>,
+  ) => {
+    const annotationId = crypto.randomUUID()
+    setAnnotations((current) => [
+      ...current,
+      {
+        ...blur,
+        id: annotationId,
+        pageNumber,
+        layer: getNextLayer(current, pageNumber),
+      },
+    ])
+    setSelectedAnnotationId(annotationId)
+    setCurrentBlurFormat(blur.format)
+    setActiveTool(null)
+  }
+
   const updateAnnotation = (updatedAnnotation: Annotation) => {
     setAnnotations((current) =>
       current.map((annotation) =>
@@ -1045,17 +1249,18 @@ export function PdfEditor({ file }: { file: File }) {
     )
   }
 
-  const changeSelectedShapeLayer = (action: LayerAction) => {
-    if (!selectedShape) return
+  const changeSelectedAnnotationLayer = (action: LayerAction) => {
+    const selectedArea = selectedShape ?? selectedBlur
+    if (!selectedArea) return
 
     setAnnotations((current) => {
       const pageAnnotations = current
         .filter(
-          (annotation) => annotation.pageNumber === selectedShape.pageNumber,
+          (annotation) => annotation.pageNumber === selectedArea.pageNumber,
         )
         .sort((first, second) => first.layer - second.layer)
       const currentIndex = pageAnnotations.findIndex(
-        (annotation) => annotation.id === selectedShape.id,
+        (annotation) => annotation.id === selectedArea.id,
       )
 
       if (currentIndex < 0) return current
@@ -1080,7 +1285,7 @@ export function PdfEditor({ file }: { file: File }) {
       )
 
       return current.map((annotation) =>
-        annotation.pageNumber === selectedShape.pageNumber
+        annotation.pageNumber === selectedArea.pageNumber
           ? {
               ...annotation,
               layer: layersById.get(annotation.id) ?? annotation.layer,
@@ -1101,7 +1306,7 @@ export function PdfEditor({ file }: { file: File }) {
 
   return (
     <div
-      className={`pdf-editor ${showTextFormatter || showShapeFormatter ? 'pdf-editor--context-format' : ''}`}
+      className={`pdf-editor ${showTextFormatter || showShapeFormatter || showBlurFormatter ? 'pdf-editor--context-format' : ''}`}
     >
       <div className="editor-toolbar" aria-label="Herramientas de edición">
         <div className="flex min-w-max items-center gap-1.5">
@@ -1156,6 +1361,21 @@ export function PdfEditor({ file }: { file: File }) {
             </DropdownMenuContent>
           </DropdownMenu>
 
+          <Button
+            variant={activeTool === 'blur' ? 'secondary' : 'ghost'}
+            size="sm"
+            className={activeTool === 'blur' ? 'editor-tool-active' : ''}
+            onClick={() => {
+              setActiveTool((current) => (current === 'blur' ? null : 'blur'))
+              setSelectedAnnotationId(null)
+              setTextDraft(null)
+            }}
+            aria-pressed={activeTool === 'blur'}
+          >
+            <Blend data-icon="inline-start" />
+            Difuminar
+          </Button>
+
           <Separator orientation="vertical" className="mx-1 h-6" />
 
           <Button
@@ -1175,7 +1395,9 @@ export function PdfEditor({ file }: { file: File }) {
               <MousePointer2 className="size-3.5 text-[#ff5a45]" aria-hidden="true" />
               {activeTool === 'text'
                 ? 'Haz clic en la página y escribe'
-                : 'Haz clic y arrastra para dibujar'}
+                : activeTool === 'blur'
+                  ? 'Arrastra sobre la sección que quieres ocultar'
+                  : 'Haz clic y arrastra para dibujar'}
               <Badge variant="secondary" className="ml-1 rounded-full px-2 text-[11px]">
                 {toolLabels[activeTool]}
               </Badge>
@@ -1185,10 +1407,12 @@ export function PdfEditor({ file }: { file: File }) {
               <Move className="size-3.5 text-blue-600" aria-hidden="true" />
               {selectedAnnotation.type === 'text'
                 ? 'Arrastra para mover · Doble clic para editar'
-                : 'Arrastra para mover · Usa los puntos azules para redimensionar'}
+                : selectedAnnotation.type === 'blur'
+                  ? 'Arrastra el área difuminada · Usa las esquinas para ajustar'
+                  : 'Arrastra para mover · Usa los puntos azules para redimensionar'}
             </>
           ) : (
-            'Selecciona Texto o Formas para comenzar'
+            'Selecciona Texto, Formas o Difuminar para comenzar'
           )}
         </div>
       </div>
@@ -1479,28 +1703,28 @@ export function PdfEditor({ file }: { file: File }) {
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="h-9 gap-2 px-2"
-                onSelect={() => changeSelectedShapeLayer('front')}
+                onSelect={() => changeSelectedAnnotationLayer('front')}
               >
                 <ChevronsUp />
                 Traer al frente
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="h-9 gap-2 px-2"
-                onSelect={() => changeSelectedShapeLayer('forward')}
+                onSelect={() => changeSelectedAnnotationLayer('forward')}
               >
                 <LayersArrowUp />
                 Subir un nivel
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="h-9 gap-2 px-2"
-                onSelect={() => changeSelectedShapeLayer('backward')}
+                onSelect={() => changeSelectedAnnotationLayer('backward')}
               >
                 <LayersArrowDown />
                 Bajar un nivel
               </DropdownMenuItem>
               <DropdownMenuItem
                 className="h-9 gap-2 px-2"
-                onSelect={() => changeSelectedShapeLayer('back')}
+                onSelect={() => changeSelectedAnnotationLayer('back')}
               >
                 <ChevronsDown />
                 Enviar al fondo
@@ -1514,6 +1738,94 @@ export function PdfEditor({ file }: { file: File }) {
             onClick={() => applyShapeFormat(defaultShapeFormat)}
             aria-label="Restablecer formato de la forma"
             title="Restablecer formato"
+          >
+            <RotateCcw aria-hidden="true" />
+          </Button>
+        </div>
+      )}
+
+      {showBlurFormatter && (
+        <div
+          className="blur-format-toolbar"
+          role="toolbar"
+          aria-label="Formato del difuminado"
+        >
+          <span className="blur-format-label">Difuminado</span>
+
+          <div className="blur-intensity-control">
+            <span className="blur-control-label">Intensidad</span>
+            <Slider
+              className="w-36"
+              min={4}
+              max={24}
+              step={1}
+              value={[activeBlurFormat.intensity]}
+              onValueChange={(value) =>
+                applyBlurFormat({ intensity: value[0] ?? 12 })
+              }
+              aria-label="Intensidad del difuminado"
+            />
+            <span className="blur-control-value">
+              {activeBlurFormat.intensity} px
+            </span>
+          </div>
+
+          <Separator orientation="vertical" className="mx-0.5 h-6" />
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shape-position-trigger"
+                disabled={!selectedBlur}
+                aria-label="Cambiar posición del área difuminada"
+              >
+                <Layers data-icon="inline-start" />
+                Posición
+                <ChevronDown data-icon="inline-end" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-52 p-1.5">
+              <DropdownMenuLabel>Orden de la capa</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="h-9 gap-2 px-2"
+                onSelect={() => changeSelectedAnnotationLayer('front')}
+              >
+                <ChevronsUp />
+                Traer al frente
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="h-9 gap-2 px-2"
+                onSelect={() => changeSelectedAnnotationLayer('forward')}
+              >
+                <LayersArrowUp />
+                Subir un nivel
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="h-9 gap-2 px-2"
+                onSelect={() => changeSelectedAnnotationLayer('backward')}
+              >
+                <LayersArrowDown />
+                Bajar un nivel
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="h-9 gap-2 px-2"
+                onSelect={() => changeSelectedAnnotationLayer('back')}
+              >
+                <ChevronsDown />
+                Enviar al fondo
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => applyBlurFormat(defaultBlurFormat)}
+            aria-label="Restablecer intensidad del difuminado"
+            title="Restablecer intensidad"
           >
             <RotateCcw aria-hidden="true" />
           </Button>
@@ -1547,6 +1859,7 @@ export function PdfEditor({ file }: { file: File }) {
                   activeTool={activeTool}
                   textFormat={activeTextFormat}
                   shapeFormat={activeShapeFormat}
+                  blurFormat={activeBlurFormat}
                   annotations={annotations.filter(
                     (annotation) => annotation.pageNumber === pageNumber,
                   )}
@@ -1556,6 +1869,7 @@ export function PdfEditor({ file }: { file: File }) {
                   onCommitText={commitText}
                   onEditText={editText}
                   onAddShape={(shape) => addShape(pageNumber, shape)}
+                  onAddBlur={(blur) => addBlur(pageNumber, blur)}
                   onUpdateAnnotation={updateAnnotation}
                   onSelectAnnotation={selectAnnotation}
                 />

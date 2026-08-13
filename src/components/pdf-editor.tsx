@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type {
   CSSProperties,
   MouseEvent as ReactMouseEvent,
@@ -13,6 +13,7 @@ import {
   ChevronsUp,
   Circle,
   Eraser,
+  Feather,
   FileText,
   Italic,
   Layers,
@@ -104,9 +105,12 @@ type BlurFormat = {
   intensity: number
 }
 
+type SignatureEffect = 'clean' | 'natural'
+
 type SignatureFormat = {
   color: string
   strokeWidth: number
+  effect: SignatureEffect
 }
 
 type Point = {
@@ -287,6 +291,7 @@ const defaultBlurFormat: BlurFormat = {
 const defaultSignatureFormat: SignatureFormat = {
   color: '#111827',
   strokeWidth: 6,
+  effect: 'natural',
 }
 
 const fontFamilies: Array<{
@@ -650,6 +655,13 @@ const getSignaturePath = (stroke: SignatureStroke) => {
   return `${path} L ${last.x.toFixed(2)} ${last.y.toFixed(2)}`
 }
 
+const getNaturalInkVariation = (strokeIndex: number, segmentIndex: number) => {
+  const value =
+    Math.sin((strokeIndex + 1) * 12.9898 + (segmentIndex + 1) * 78.233) *
+    43758.5453
+  return value - Math.floor(value)
+}
+
 function SignatureDrawing({
   strokes,
   format,
@@ -657,29 +669,110 @@ function SignatureDrawing({
   strokes: SignatureStroke[]
   format: SignatureFormat
 }) {
+  const inkFilterId = `signature-ink-${useId().replace(/:/g, '')}`
+  const hasNaturalEffect = format.effect !== 'clean'
+
   return (
     <>
-      {strokes.map((stroke, index) => {
+      {hasNaturalEffect && (
+        <defs>
+          <filter
+            id={inkFilterId}
+            x="-5%"
+            y="-15%"
+            width="110%"
+            height="130%"
+            colorInterpolationFilters="sRGB"
+          >
+            <feTurbulence
+              type="fractalNoise"
+              baseFrequency="0.012 0.045"
+              numOctaves={2}
+              seed={17}
+              result="inkNoise"
+            />
+            <feDisplacementMap
+              in="SourceGraphic"
+              in2="inkNoise"
+              scale={Math.max(0.6, format.strokeWidth * 0.16)}
+              xChannelSelector="R"
+              yChannelSelector="B"
+            />
+          </filter>
+        </defs>
+      )}
+      <g filter={hasNaturalEffect ? `url(#${inkFilterId})` : undefined}>
+        {strokes.map((stroke, strokeIndex) => {
         const averagePressure =
           stroke.reduce((total, point) => total + point.pressure, 0) /
           Math.max(stroke.length, 1)
         const strokeWidth = format.strokeWidth * (0.85 + averagePressure * 0.3)
 
         if (stroke.length === 1) {
+          const pointWidth = hasNaturalEffect
+            ? format.strokeWidth *
+              (0.72 + stroke[0].pressure * 0.56) *
+              (0.94 + getNaturalInkVariation(strokeIndex, 0) * 0.12)
+            : strokeWidth
+
           return (
             <circle
-              key={index}
+              key={strokeIndex}
               cx={stroke[0].x * 1000}
               cy={stroke[0].y * 300}
-              r={strokeWidth / 2}
+              r={pointWidth / 2}
               fill={format.color}
             />
           )
         }
 
+        if (hasNaturalEffect) {
+          const segmentCount = stroke.length - 1
+
+          return (
+            <g key={strokeIndex}>
+              {stroke.slice(1).map((point, segmentIndex) => {
+                const previousPoint = stroke[segmentIndex]
+                const pressure = (previousPoint.pressure + point.pressure) / 2
+                const edgeDistance = Math.min(
+                  segmentIndex + 1,
+                  segmentCount - segmentIndex,
+                )
+                const taper = Math.min(1, 0.68 + edgeDistance * 0.14)
+                const variation = getNaturalInkVariation(
+                  strokeIndex,
+                  segmentIndex,
+                )
+                const opacityVariation = getNaturalInkVariation(
+                  strokeIndex + 31,
+                  segmentIndex,
+                )
+                const naturalStrokeWidth =
+                  format.strokeWidth *
+                  (0.72 + pressure * 0.56) *
+                  (0.94 + variation * 0.12) *
+                  taper
+
+                return (
+                  <path
+                    key={segmentIndex}
+                    d={`M ${(previousPoint.x * 1000).toFixed(2)} ${(previousPoint.y * 300).toFixed(2)} L ${(point.x * 1000).toFixed(2)} ${(point.y * 300).toFixed(2)}`}
+                    fill="none"
+                    stroke={format.color}
+                    strokeWidth={naturalStrokeWidth}
+                    strokeOpacity={0.9 + opacityVariation * 0.1}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                )
+              })}
+            </g>
+          )
+        }
+
         return (
           <path
-            key={index}
+            key={strokeIndex}
             d={getSignaturePath(stroke)}
             fill="none"
             stroke={format.color}
@@ -688,7 +781,8 @@ function SignatureDrawing({
             strokeLinejoin="round"
           />
         )
-      })}
+        })}
+      </g>
     </>
   )
 }
@@ -809,12 +903,16 @@ function SignaturePad({
 
   return (
     <>
-      <div className="signature-pad-tools">
-        <span className="signature-pad-tool-label">
-          <PenLine aria-hidden="true" />
-          Color de tinta
-        </span>
-        <div className="flex items-center gap-1.5">
+      <div
+        className="signature-pad-tools"
+        role="toolbar"
+        aria-label="Formato de la firma"
+      >
+        <div className="signature-pad-control">
+          <span className="signature-pad-tool-label">
+            <PenLine aria-hidden="true" />
+            Tinta
+          </span>
           {['#111827', '#1d4ed8'].map((color) => (
             <Button
               key={color}
@@ -828,6 +926,50 @@ function SignaturePad({
             />
           ))}
         </div>
+
+        <div className="signature-pad-control signature-width-control">
+          <span className="signature-pad-tool-label">
+            <Minus aria-hidden="true" />
+            Grosor
+          </span>
+          <Slider
+            className="signature-width-slider"
+            min={2}
+            max={14}
+            step={1}
+            value={[format.strokeWidth]}
+            onValueChange={(value) =>
+              setFormat((current) => ({
+                ...current,
+                strokeWidth: value[0] ?? current.strokeWidth,
+              }))
+            }
+            aria-label="Grosor de la firma"
+          />
+          <span className="signature-control-value">
+            {format.strokeWidth} px
+          </span>
+        </div>
+
+        <Button
+          type="button"
+          variant={format.effect === 'natural' ? 'secondary' : 'outline'}
+          size="sm"
+          className={
+            format.effect === 'natural' ? 'signature-natural-active' : ''
+          }
+          onClick={() =>
+            setFormat((current) => ({
+              ...current,
+              effect: current.effect === 'natural' ? 'clean' : 'natural',
+            }))
+          }
+          aria-pressed={format.effect === 'natural'}
+          title="Añade variaciones sutiles de presión y tinta"
+        >
+          <Feather data-icon="inline-start" />
+          Tinta natural
+        </Button>
       </div>
 
       <div className="signature-pad-wrap">
@@ -2394,6 +2536,57 @@ export function PdfEditor({ file }: { file: File }) {
               />
             ))}
           </div>
+
+          <Separator orientation="vertical" className="mx-0.5 h-6" />
+
+          <div className="signature-width-control">
+            <span className="signature-control-label">Grosor</span>
+            <Slider
+              className="signature-width-slider"
+              min={2}
+              max={14}
+              step={1}
+              value={[selectedSignature.format.strokeWidth]}
+              onValueChange={(value) =>
+                applySignatureFormat({
+                  strokeWidth:
+                    value[0] ?? selectedSignature.format.strokeWidth,
+                })
+              }
+              aria-label="Grosor de la firma seleccionada"
+            />
+            <span className="signature-control-value">
+              {selectedSignature.format.strokeWidth} px
+            </span>
+          </div>
+
+          <Button
+            type="button"
+            variant={
+              selectedSignature.format.effect !== 'clean'
+                ? 'secondary'
+                : 'outline'
+            }
+            size="sm"
+            className={
+              selectedSignature.format.effect !== 'clean'
+                ? 'signature-natural-active'
+                : ''
+            }
+            onClick={() =>
+              applySignatureFormat({
+                effect:
+                  selectedSignature.format.effect !== 'clean'
+                    ? 'clean'
+                    : 'natural',
+              })
+            }
+            aria-pressed={selectedSignature.format.effect !== 'clean'}
+            title="Añade variaciones sutiles de presión y tinta"
+          >
+            <Feather data-icon="inline-start" />
+            Tinta natural
+          </Button>
 
           <Separator orientation="vertical" className="mx-0.5 h-6" />
 

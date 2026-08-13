@@ -209,13 +209,17 @@
 }
 
 .signature-color-control,
-.signature-pad-tools {
+.signature-pad-tools,
+.signature-pad-control,
+.signature-width-control {
   display: flex;
   align-items: center;
   gap: 0.55rem;
 }
 
-.signature-color-control {
+.signature-color-control,
+.signature-pad-control,
+.signature-width-control {
   border: 1px solid #e2e8f0;
   border-radius: 0.5rem;
   background: white;
@@ -223,10 +227,33 @@
 }
 
 .signature-control-label,
+.signature-control-value,
 .signature-pad-tool-label {
   color: #475569;
   font-size: 0.75rem;
   font-weight: 500;
+}
+
+.signature-control-value {
+  min-width: 2.5rem;
+  color: #64748b;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.signature-width-control {
+  min-width: 12.5rem;
+}
+
+.signature-width-slider {
+  width: 6rem;
+}
+
+.signature-natural-active {
+  border-color: rgba(255, 90, 69, 0.28) !important;
+  background: #fff0ed !important;
+  color: #c83625 !important;
 }
 
 .signature-pad-tool-label {
@@ -257,7 +284,12 @@
 }
 
 .signature-pad-tools {
+  justify-content: space-between;
   flex-wrap: wrap;
+}
+
+.signature-pad-tools > .signature-pad-control {
+  min-height: 2.25rem;
 }
 
 .signature-pad-wrap {

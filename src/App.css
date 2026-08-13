@@ -191,6 +191,10 @@
   background: white;
 }
 
+.shape-position-trigger {
+  background: white;
+}
+
 .editor-canvas-area {
   height: calc(100svh - 18.75rem);
   min-height: 33rem;

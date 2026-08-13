@@ -7,9 +7,14 @@ import type {
 import {
   Bold,
   ChevronDown,
+  ChevronsDown,
+  ChevronsUp,
   Circle,
   FileText,
   Italic,
+  Layers,
+  LayersArrowDown,
+  LayersArrowUp,
   LoaderCircle,
   Minus,
   MousePointer2,
@@ -64,6 +69,7 @@ GlobalWorkerOptions.workerSrc = pdfWorker
 type ShapeTool = 'rectangle' | 'circle' | 'triangle' | 'line'
 type EditorTool = 'text' | ShapeTool | null
 type ResizeHandle = 'nw' | 'ne' | 'sw' | 'se' | 'start' | 'end'
+type LayerAction = 'front' | 'forward' | 'backward' | 'back'
 type TextFontFamily = 'helvetica' | 'times' | 'georgia' | 'courier' | 'verdana'
 
 type TextFormat = {
@@ -94,6 +100,7 @@ type TextAnnotation = {
   y: number
   text: string
   format: TextFormat
+  layer: number
 }
 
 type ShapeAnnotation = {
@@ -103,6 +110,7 @@ type ShapeAnnotation = {
   start: Point
   end: Point
   format: ShapeFormat
+  layer: number
 }
 
 type Annotation = TextAnnotation | ShapeAnnotation
@@ -152,7 +160,9 @@ type PdfPageProps = {
   onTextDraftChange: (draft: TextDraft | null) => void
   onCommitText: (draft: TextDraft) => void
   onEditText: (annotation: TextAnnotation) => void
-  onAddShape: (annotation: Omit<ShapeAnnotation, 'id' | 'pageNumber'>) => void
+  onAddShape: (
+    annotation: Omit<ShapeAnnotation, 'id' | 'pageNumber' | 'layer'>,
+  ) => void
   onUpdateAnnotation: (annotation: Annotation) => void
   onSelectAnnotation: (id: string | null) => void
 }
@@ -235,6 +245,14 @@ const getTextRenderStyle = (
 const clamp = (value: number, min = 0, max = 1) =>
   Math.min(max, Math.max(min, value))
 
+const getNextLayer = (annotations: Annotation[], pageNumber: number) =>
+  Math.max(
+    0,
+    ...annotations
+      .filter((annotation) => annotation.pageNumber === pageNumber)
+      .map((annotation) => annotation.layer),
+  ) + 1
+
 const getPoint = (
   event: Pick<ReactPointerEvent<Element> | ReactMouseEvent<Element>, 'clientX' | 'clientY'>,
   element: HTMLDivElement,
@@ -312,7 +330,7 @@ function ShapeMark({
 
   const shapeProps = {
     fill: annotation.type === 'line' ? 'none' : annotation.format.color,
-    fillOpacity: annotation.type === 'line' ? undefined : 0.12,
+    fillOpacity: annotation.type === 'line' ? undefined : 1,
     stroke: annotation.format.color,
     strokeWidth: annotation.format.strokeWidth,
     opacity: annotation.format.opacity,
@@ -728,26 +746,37 @@ function PdfPage({
       >
         <canvas ref={canvasRef} className="pdf-page-canvas" />
 
-        <svg
-          className="annotation-svg"
-          viewBox="0 0 1000 1000"
-          preserveAspectRatio="none"
-          role="group"
-          aria-label={`Formas agregadas a la página ${pageNumber}`}
-        >
-          {annotations
-            .filter((annotation): annotation is ShapeAnnotation => annotation.type !== 'text')
-            .map((annotation) => (
+        {annotations
+          .filter((annotation): annotation is ShapeAnnotation => annotation.type !== 'text')
+          .map((annotation) => (
+            <svg
+              key={annotation.id}
+              className="annotation-svg"
+              viewBox="0 0 1000 1000"
+              preserveAspectRatio="none"
+              style={{ zIndex: annotation.layer }}
+              aria-hidden="true"
+            >
               <ShapeMark
-                key={annotation.id}
                 annotation={annotation}
                 isSelected={selectedAnnotationId === annotation.id}
                 onMoveStart={startShapeMove}
                 onResizeStart={startShapeResize}
               />
-            ))}
-          {shapeDraft && <ShapeMark annotation={shapeDraft} isDraft />}
-        </svg>
+            </svg>
+          ))}
+
+        {shapeDraft && (
+          <svg
+            className="annotation-svg"
+            viewBox="0 0 1000 1000"
+            preserveAspectRatio="none"
+            style={{ zIndex: 10000 }}
+            aria-hidden="true"
+          >
+            <ShapeMark annotation={shapeDraft} isDraft />
+          </svg>
+        )}
 
         {annotations
           .filter((annotation): annotation is TextAnnotation => annotation.type === 'text')
@@ -759,6 +788,7 @@ function PdfPage({
               style={{
                 left: `${annotation.x * 100}%`,
                 top: `${annotation.y * 100}%`,
+                zIndex: annotation.layer,
                 ...getTextRenderStyle(annotation.format, pageWidth),
               }}
               onPointerDown={(event) => startTextMove(event, annotation)}
@@ -784,6 +814,7 @@ function PdfPage({
             style={{
               left: `${textDraft.x * 100}%`,
               top: `${textDraft.y * 100}%`,
+              zIndex: 10001,
               ...getTextRenderStyle(textDraft.format, pageWidth),
             }}
             value={textDraft.value}
@@ -952,17 +983,21 @@ export function PdfEditor({ file }: { file: File }) {
         setSelectedAnnotationId(null)
       }
     } else if (text) {
-      const annotation: TextAnnotation = {
-        id: crypto.randomUUID(),
-        pageNumber: draft.pageNumber,
-        type: 'text',
-        x: draft.x,
-        y: draft.y,
-        text,
-        format: draft.format,
-      }
-      setAnnotations((current) => [...current, annotation])
-      setSelectedAnnotationId(annotation.id)
+      const annotationId = crypto.randomUUID()
+      setAnnotations((current) => [
+        ...current,
+        {
+          id: annotationId,
+          pageNumber: draft.pageNumber,
+          type: 'text',
+          x: draft.x,
+          y: draft.y,
+          text,
+          format: draft.format,
+          layer: getNextLayer(current, draft.pageNumber),
+        },
+      ])
+      setSelectedAnnotationId(annotationId)
     }
 
     setTextDraft(null)
@@ -985,16 +1020,20 @@ export function PdfEditor({ file }: { file: File }) {
 
   const addShape = (
     pageNumber: number,
-    shape: Omit<ShapeAnnotation, 'id' | 'pageNumber'>,
+    shape: Omit<ShapeAnnotation, 'id' | 'pageNumber' | 'layer'>,
   ) => {
-    const annotation: ShapeAnnotation = {
-      ...shape,
-      id: crypto.randomUUID(),
-      pageNumber,
-    }
-    setAnnotations((current) => [...current, annotation])
-    setSelectedAnnotationId(annotation.id)
-    setCurrentShapeFormat(annotation.format)
+    const annotationId = crypto.randomUUID()
+    setAnnotations((current) => [
+      ...current,
+      {
+        ...shape,
+        id: annotationId,
+        pageNumber,
+        layer: getNextLayer(current, pageNumber),
+      },
+    ])
+    setSelectedAnnotationId(annotationId)
+    setCurrentShapeFormat(shape.format)
     setActiveTool(null)
   }
 
@@ -1004,6 +1043,51 @@ export function PdfEditor({ file }: { file: File }) {
         annotation.id === updatedAnnotation.id ? updatedAnnotation : annotation,
       ),
     )
+  }
+
+  const changeSelectedShapeLayer = (action: LayerAction) => {
+    if (!selectedShape) return
+
+    setAnnotations((current) => {
+      const pageAnnotations = current
+        .filter(
+          (annotation) => annotation.pageNumber === selectedShape.pageNumber,
+        )
+        .sort((first, second) => first.layer - second.layer)
+      const currentIndex = pageAnnotations.findIndex(
+        (annotation) => annotation.id === selectedShape.id,
+      )
+
+      if (currentIndex < 0) return current
+
+      const targetIndex =
+        action === 'front'
+          ? pageAnnotations.length - 1
+          : action === 'back'
+            ? 0
+            : action === 'forward'
+              ? Math.min(currentIndex + 1, pageAnnotations.length - 1)
+              : Math.max(currentIndex - 1, 0)
+
+      if (targetIndex === currentIndex) return current
+
+      const [movedAnnotation] = pageAnnotations.splice(currentIndex, 1)
+      if (!movedAnnotation) return current
+      pageAnnotations.splice(targetIndex, 0, movedAnnotation)
+
+      const layersById = new Map(
+        pageAnnotations.map((annotation, index) => [annotation.id, index + 1]),
+      )
+
+      return current.map((annotation) =>
+        annotation.pageNumber === selectedShape.pageNumber
+          ? {
+              ...annotation,
+              layer: layersById.get(annotation.id) ?? annotation.layer,
+            }
+          : annotation,
+      )
+    })
   }
 
   const removeSelectedAnnotation = () => {
@@ -1297,7 +1381,7 @@ export function PdfEditor({ file }: { file: File }) {
               <div>
                 <p className="text-sm font-medium text-slate-900">Color de la forma</p>
                 <p className="mt-0.5 text-xs text-slate-500">
-                  Se aplicará al borde y al relleno sutil.
+                  Se aplicará al borde y al relleno.
                 </p>
               </div>
               <div className="grid grid-cols-8 gap-1.5">
@@ -1373,6 +1457,56 @@ export function PdfEditor({ file }: { file: File }) {
               ))}
             </SelectContent>
           </Select>
+
+          <Separator orientation="vertical" className="mx-0.5 h-6" />
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shape-position-trigger"
+                disabled={!selectedShape}
+                aria-label="Cambiar posición de la forma"
+              >
+                <Layers data-icon="inline-start" />
+                Posición
+                <ChevronDown data-icon="inline-end" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-52 p-1.5">
+              <DropdownMenuLabel>Orden de la capa</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="h-9 gap-2 px-2"
+                onSelect={() => changeSelectedShapeLayer('front')}
+              >
+                <ChevronsUp />
+                Traer al frente
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="h-9 gap-2 px-2"
+                onSelect={() => changeSelectedShapeLayer('forward')}
+              >
+                <LayersArrowUp />
+                Subir un nivel
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="h-9 gap-2 px-2"
+                onSelect={() => changeSelectedShapeLayer('backward')}
+              >
+                <LayersArrowDown />
+                Bajar un nivel
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="h-9 gap-2 px-2"
+                onSelect={() => changeSelectedShapeLayer('back')}
+              >
+                <ChevronsDown />
+                Enviar al fondo
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <Button
             variant="ghost"

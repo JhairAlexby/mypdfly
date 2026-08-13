@@ -37,6 +37,76 @@ const getCanvasContext = (canvas: HTMLCanvasElement) => {
   return context
 }
 
+const clampPixelIndex = (value: number, maximum: number) =>
+  Math.min(maximum, Math.max(0, value))
+
+const blurImageData = (imageData: ImageData, radius: number) => {
+  const { data, width, height } = imageData
+  const safeRadius = Math.max(1, Math.round(radius))
+  const sampleCount = safeRadius * 2 + 1
+  const horizontal = new Uint8ClampedArray(data.length)
+
+  for (let y = 0; y < height; y += 1) {
+    const sums = [0, 0, 0, 0]
+
+    for (let offset = -safeRadius; offset <= safeRadius; offset += 1) {
+      const x = clampPixelIndex(offset, width - 1)
+      const index = (y * width + x) * 4
+      sums[0] += data[index]
+      sums[1] += data[index + 1]
+      sums[2] += data[index + 2]
+      sums[3] += data[index + 3]
+    }
+
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * 4
+      horizontal[index] = sums[0] / sampleCount
+      horizontal[index + 1] = sums[1] / sampleCount
+      horizontal[index + 2] = sums[2] / sampleCount
+      horizontal[index + 3] = sums[3] / sampleCount
+
+      const removeX = clampPixelIndex(x - safeRadius, width - 1)
+      const addX = clampPixelIndex(x + safeRadius + 1, width - 1)
+      const removeIndex = (y * width + removeX) * 4
+      const addIndex = (y * width + addX) * 4
+      sums[0] += data[addIndex] - data[removeIndex]
+      sums[1] += data[addIndex + 1] - data[removeIndex + 1]
+      sums[2] += data[addIndex + 2] - data[removeIndex + 2]
+      sums[3] += data[addIndex + 3] - data[removeIndex + 3]
+    }
+  }
+
+  for (let x = 0; x < width; x += 1) {
+    const sums = [0, 0, 0, 0]
+
+    for (let offset = -safeRadius; offset <= safeRadius; offset += 1) {
+      const y = clampPixelIndex(offset, height - 1)
+      const index = (y * width + x) * 4
+      sums[0] += horizontal[index]
+      sums[1] += horizontal[index + 1]
+      sums[2] += horizontal[index + 2]
+      sums[3] += horizontal[index + 3]
+    }
+
+    for (let y = 0; y < height; y += 1) {
+      const index = (y * width + x) * 4
+      data[index] = sums[0] / sampleCount
+      data[index + 1] = sums[1] / sampleCount
+      data[index + 2] = sums[2] / sampleCount
+      data[index + 3] = sums[3] / sampleCount
+
+      const removeY = clampPixelIndex(y - safeRadius, height - 1)
+      const addY = clampPixelIndex(y + safeRadius + 1, height - 1)
+      const removeIndex = (removeY * width + x) * 4
+      const addIndex = (addY * width + x) * 4
+      sums[0] += horizontal[addIndex] - horizontal[removeIndex]
+      sums[1] += horizontal[addIndex + 1] - horizontal[removeIndex + 1]
+      sums[2] += horizontal[addIndex + 2] - horizontal[removeIndex + 2]
+      sums[3] += horizontal[addIndex + 3] - horizontal[removeIndex + 3]
+    }
+  }
+}
+
 const drawShape = (
   context: CanvasRenderingContext2D,
   annotation: ShapeAnnotation,
@@ -134,14 +204,23 @@ const drawBlur = (
     sourceWidth,
     sourceHeight,
   )
+  const imageData = bufferContext.getImageData(
+    0,
+    0,
+    sourceWidth,
+    sourceHeight,
+  )
+  blurImageData(
+    imageData,
+    annotation.format.intensity * exportScale * 0.75,
+  )
+  bufferContext.putImageData(imageData, 0, 0)
 
   context.save()
   context.beginPath()
   context.rect(x, y, blurWidth, blurHeight)
   context.clip()
-  context.filter = `blur(${annotation.format.intensity * exportScale}px)`
   context.drawImage(buffer, sourceX, sourceY)
-  context.filter = 'none'
   context.fillStyle = 'rgba(241, 245, 249, 0.16)'
   context.fillRect(x, y, blurWidth, blurHeight)
   context.restore()

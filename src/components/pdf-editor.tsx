@@ -1,21 +1,27 @@
 import { useEffect, useRef, useState } from 'react'
 import type {
+  CSSProperties,
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
 } from 'react'
 import {
+  Bold,
   ChevronDown,
   Circle,
   FileText,
+  Italic,
   LoaderCircle,
   Minus,
   MousePointer2,
   Move,
+  Palette,
+  RotateCcw,
   Shapes,
   Square,
   Trash2,
   Triangle,
   Type,
+  Underline,
 } from 'lucide-react'
 import {
   GlobalWorkerOptions,
@@ -38,6 +44,18 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 
 GlobalWorkerOptions.workerSrc = pdfWorker
@@ -45,6 +63,16 @@ GlobalWorkerOptions.workerSrc = pdfWorker
 type ShapeTool = 'rectangle' | 'circle' | 'triangle' | 'line'
 type EditorTool = 'text' | ShapeTool | null
 type ResizeHandle = 'nw' | 'ne' | 'sw' | 'se' | 'start' | 'end'
+type TextFontFamily = 'helvetica' | 'times' | 'georgia' | 'courier' | 'verdana'
+
+type TextFormat = {
+  fontFamily: TextFontFamily
+  fontSize: number
+  color: string
+  bold: boolean
+  italic: boolean
+  underline: boolean
+}
 
 type Point = {
   x: number
@@ -58,6 +86,7 @@ type TextAnnotation = {
   x: number
   y: number
   text: string
+  format: TextFormat
 }
 
 type ShapeAnnotation = {
@@ -76,6 +105,7 @@ type TextDraft = {
   x: number
   y: number
   value: string
+  format: TextFormat
 }
 
 type ShapeDraft = {
@@ -105,6 +135,7 @@ type PdfPageProps = {
   pdfDocument: PDFDocumentProxy
   pageNumber: number
   activeTool: EditorTool
+  textFormat: TextFormat
   annotations: Annotation[]
   selectedAnnotationId: string | null
   textDraft: TextDraft | null
@@ -134,6 +165,54 @@ const shapeOptions: Array<{
   { value: 'triangle', label: 'Triángulo', icon: Triangle },
   { value: 'line', label: 'Línea', icon: Minus },
 ]
+
+const defaultTextFormat: TextFormat = {
+  fontFamily: 'helvetica',
+  fontSize: 14,
+  color: '#111827',
+  bold: false,
+  italic: false,
+  underline: false,
+}
+
+const fontFamilies: Array<{
+  value: TextFontFamily
+  label: string
+  css: string
+}> = [
+  { value: 'helvetica', label: 'Helvetica', css: 'Arial, Helvetica, sans-serif' },
+  { value: 'times', label: 'Times New Roman', css: '"Times New Roman", Times, serif' },
+  { value: 'georgia', label: 'Georgia', css: 'Georgia, serif' },
+  { value: 'courier', label: 'Courier', css: '"Courier New", Courier, monospace' },
+  { value: 'verdana', label: 'Verdana', css: 'Verdana, Geneva, sans-serif' },
+]
+
+const fontSizes = [8, 10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64]
+
+const textColors = [
+  '#111827',
+  '#475569',
+  '#dc2626',
+  '#ea580c',
+  '#ca8a04',
+  '#16a34a',
+  '#2563eb',
+  '#7c3aed',
+]
+
+const getTextRenderStyle = (
+  format: TextFormat,
+  pageWidth: number,
+): CSSProperties => ({
+  color: format.color,
+  fontFamily:
+    fontFamilies.find((font) => font.value === format.fontFamily)?.css ??
+    fontFamilies[0].css,
+  fontSize: `${(format.fontSize / pageWidth) * 100}cqw`,
+  fontStyle: format.italic ? 'italic' : 'normal',
+  fontWeight: format.bold ? 700 : 400,
+  textDecoration: format.underline ? 'underline' : 'none',
+})
 
 const clamp = (value: number, min = 0, max = 1) =>
   Math.min(max, Math.max(min, value))
@@ -327,6 +406,7 @@ function PdfPage({
   pdfDocument,
   pageNumber,
   activeTool,
+  textFormat,
   annotations,
   selectedAnnotationId,
   textDraft,
@@ -341,6 +421,7 @@ function PdfPage({
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [pdfPage, setPdfPage] = useState<PDFPageProxy | null>(null)
   const [aspectRatio, setAspectRatio] = useState(8.5 / 11)
+  const [pageWidth, setPageWidth] = useState(612)
   const [shapeDraft, setShapeDraft] = useState<ShapeDraft | null>(null)
   const [interaction, setInteraction] = useState<AnnotationInteraction | null>(null)
 
@@ -351,6 +432,7 @@ function PdfPage({
       if (cancelled) return
       const viewport = page.getViewport({ scale: 1 })
       setAspectRatio(viewport.width / viewport.height)
+      setPageWidth(viewport.width)
       setPdfPage(page)
     })
 
@@ -437,6 +519,7 @@ function PdfPage({
       x: Math.min(point.x, 0.72),
       y: Math.min(point.y, 0.94),
       value: '',
+      format: textFormat,
     })
   }
 
@@ -649,7 +732,11 @@ function PdfPage({
               key={annotation.id}
               type="button"
               className={`text-annotation ${selectedAnnotationId === annotation.id ? 'text-annotation--selected' : ''}`}
-              style={{ left: `${annotation.x * 100}%`, top: `${annotation.y * 100}%` }}
+              style={{
+                left: `${annotation.x * 100}%`,
+                top: `${annotation.y * 100}%`,
+                ...getTextRenderStyle(annotation.format, pageWidth),
+              }}
               onPointerDown={(event) => startTextMove(event, annotation)}
               onClick={(event) => {
                 event.stopPropagation()
@@ -670,7 +757,11 @@ function PdfPage({
           <Input
             autoFocus
             className="text-draft"
-            style={{ left: `${textDraft.x * 100}%`, top: `${textDraft.y * 100}%` }}
+            style={{
+              left: `${textDraft.x * 100}%`,
+              top: `${textDraft.y * 100}%`,
+              ...getTextRenderStyle(textDraft.format, pageWidth),
+            }}
             value={textDraft.value}
             placeholder="Escribe aquí…"
             onPointerDown={(event) => event.stopPropagation()}
@@ -678,7 +769,16 @@ function PdfPage({
             onChange={(event) =>
               onTextDraftChange({ ...textDraft, value: event.target.value })
             }
-            onBlur={() => onCommitText(textDraft)}
+            onBlur={(event) => {
+              const nextTarget = event.relatedTarget
+              if (
+                nextTarget instanceof HTMLElement &&
+                nextTarget.closest('.text-format-toolbar')
+              ) {
+                return
+              }
+              onCommitText(textDraft)
+            }}
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
                 event.preventDefault()
@@ -711,6 +811,8 @@ export function PdfEditor({ file }: { file: File }) {
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null)
   const [textDraft, setTextDraft] = useState<TextDraft | null>(null)
+  const [currentTextFormat, setCurrentTextFormat] =
+    useState<TextFormat>(defaultTextFormat)
 
   useEffect(() => {
     let cancelled = false
@@ -736,6 +838,48 @@ export function PdfEditor({ file }: { file: File }) {
     }
   }, [file])
 
+  const selectedAnnotation = annotations.find(
+    (annotation) => annotation.id === selectedAnnotationId,
+  )
+  const selectedText =
+    selectedAnnotation?.type === 'text' ? selectedAnnotation : null
+  const activeTextFormat =
+    textDraft?.format ?? selectedText?.format ?? currentTextFormat
+  const showTextFormatter =
+    activeTool === 'text' || Boolean(textDraft) || Boolean(selectedText)
+
+  const selectAnnotation = (id: string | null) => {
+    setSelectedAnnotationId(id)
+    if (!id) return
+
+    const annotation = annotations.find((item) => item.id === id)
+    if (annotation?.type === 'text') {
+      setCurrentTextFormat(annotation.format)
+    }
+  }
+
+  const applyTextFormat = (patch: Partial<TextFormat>) => {
+    setCurrentTextFormat((current) => ({ ...current, ...patch }))
+    setTextDraft((current) =>
+      current
+        ? { ...current, format: { ...current.format, ...patch } }
+        : current,
+    )
+
+    if (selectedText) {
+      setAnnotations((current) =>
+        current.map((annotation) =>
+          annotation.id === selectedText.id && annotation.type === 'text'
+            ? {
+                ...annotation,
+                format: { ...annotation.format, ...patch },
+              }
+            : annotation,
+        ),
+      )
+    }
+  }
+
   const commitText = (draft: TextDraft) => {
     const text = draft.value.trim()
 
@@ -744,7 +888,7 @@ export function PdfEditor({ file }: { file: File }) {
         setAnnotations((current) =>
           current.map((annotation) =>
             annotation.id === draft.annotationId && annotation.type === 'text'
-              ? { ...annotation, text }
+              ? { ...annotation, text, format: draft.format }
               : annotation,
           ),
         )
@@ -763,6 +907,7 @@ export function PdfEditor({ file }: { file: File }) {
         x: draft.x,
         y: draft.y,
         text,
+        format: draft.format,
       }
       setAnnotations((current) => [...current, annotation])
       setSelectedAnnotationId(annotation.id)
@@ -775,12 +920,14 @@ export function PdfEditor({ file }: { file: File }) {
   const editText = (annotation: TextAnnotation) => {
     setSelectedAnnotationId(annotation.id)
     setActiveTool(null)
+    setCurrentTextFormat(annotation.format)
     setTextDraft({
       annotationId: annotation.id,
       pageNumber: annotation.pageNumber,
       x: annotation.x,
       y: annotation.y,
       value: annotation.text,
+      format: annotation.format,
     })
   }
 
@@ -816,12 +963,10 @@ export function PdfEditor({ file }: { file: File }) {
   }
 
   const shapeToolActive = activeTool !== null && activeTool !== 'text'
-  const selectedAnnotation = annotations.find(
-    (annotation) => annotation.id === selectedAnnotationId,
-  )
-
   return (
-    <div className="pdf-editor">
+    <div
+      className={`pdf-editor ${showTextFormatter ? 'pdf-editor--text-format' : ''}`}
+    >
       <div className="editor-toolbar" aria-label="Herramientas de edición">
         <div className="flex min-w-max items-center gap-1.5">
           <Button
@@ -912,6 +1057,165 @@ export function PdfEditor({ file }: { file: File }) {
         </div>
       </div>
 
+      {showTextFormatter && (
+        <div
+          className="text-format-toolbar"
+          role="toolbar"
+          aria-label="Formato de texto"
+        >
+          <span className="text-format-label">Formato</span>
+
+          <Select
+            value={activeTextFormat.fontFamily}
+            onValueChange={(value) =>
+              applyTextFormat({ fontFamily: value as TextFontFamily })
+            }
+          >
+            <SelectTrigger
+              size="sm"
+              className="text-font-select"
+              aria-label="Familia tipográfica"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper" align="start">
+              {fontFamilies.map((font) => (
+                <SelectItem
+                  key={font.value}
+                  value={font.value}
+                  style={{ fontFamily: font.css }}
+                >
+                  {font.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={String(activeTextFormat.fontSize)}
+            onValueChange={(value) =>
+              applyTextFormat({ fontSize: Number(value) })
+            }
+          >
+            <SelectTrigger
+              size="sm"
+              className="text-size-select"
+              aria-label="Tamaño de letra"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper" align="start" className="min-w-24">
+              {fontSizes.map((size) => (
+                <SelectItem key={size} value={String(size)}>
+                  {size} pt
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-color-trigger"
+                aria-label="Cambiar color del texto"
+              >
+                <Palette data-icon="inline-start" />
+                <span
+                  className="text-color-current"
+                  style={{ backgroundColor: activeTextFormat.color }}
+                  aria-hidden="true"
+                />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-60 gap-3 p-3">
+              <div>
+                <p className="text-sm font-medium text-slate-900">Color del texto</p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Selecciona un color o crea uno personalizado.
+                </p>
+              </div>
+              <div className="grid grid-cols-8 gap-1.5">
+                {textColors.map((color) => (
+                  <Button
+                    key={color}
+                    variant="outline"
+                    size="icon-sm"
+                    className={`text-color-swatch ${activeTextFormat.color === color ? 'text-color-swatch--active' : ''}`}
+                    style={{ backgroundColor: color }}
+                    onClick={() => applyTextFormat({ color })}
+                    aria-label={`Usar color ${color}`}
+                  />
+                ))}
+              </div>
+              <label className="flex items-center justify-between gap-3 text-xs font-medium text-slate-600">
+                Personalizado
+                <span className="flex items-center gap-2 font-mono text-[11px] font-normal text-slate-500">
+                  {activeTextFormat.color.toUpperCase()}
+                  <Input
+                    type="color"
+                    className="h-8 w-10 cursor-pointer p-1"
+                    value={activeTextFormat.color}
+                    onChange={(event) =>
+                      applyTextFormat({ color: event.target.value })
+                    }
+                    aria-label="Elegir color personalizado"
+                  />
+                </span>
+              </label>
+            </PopoverContent>
+          </Popover>
+
+          <Separator orientation="vertical" className="mx-0.5 h-6" />
+
+          <div className="flex items-center gap-1" aria-label="Estilo de letra">
+            <Button
+              variant={activeTextFormat.bold ? 'secondary' : 'outline'}
+              size="icon-sm"
+              className={activeTextFormat.bold ? 'text-format-active' : ''}
+              onClick={() => applyTextFormat({ bold: !activeTextFormat.bold })}
+              aria-label="Negrita"
+              aria-pressed={activeTextFormat.bold}
+            >
+              <Bold aria-hidden="true" />
+            </Button>
+            <Button
+              variant={activeTextFormat.italic ? 'secondary' : 'outline'}
+              size="icon-sm"
+              className={activeTextFormat.italic ? 'text-format-active' : ''}
+              onClick={() => applyTextFormat({ italic: !activeTextFormat.italic })}
+              aria-label="Cursiva"
+              aria-pressed={activeTextFormat.italic}
+            >
+              <Italic aria-hidden="true" />
+            </Button>
+            <Button
+              variant={activeTextFormat.underline ? 'secondary' : 'outline'}
+              size="icon-sm"
+              className={activeTextFormat.underline ? 'text-format-active' : ''}
+              onClick={() =>
+                applyTextFormat({ underline: !activeTextFormat.underline })
+              }
+              aria-label="Subrayado"
+              aria-pressed={activeTextFormat.underline}
+            >
+              <Underline aria-hidden="true" />
+            </Button>
+          </div>
+
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => applyTextFormat(defaultTextFormat)}
+            aria-label="Restablecer formato"
+            title="Restablecer formato"
+          >
+            <RotateCcw aria-hidden="true" />
+          </Button>
+        </div>
+      )}
+
       <div className="editor-canvas-area">
         {!pdfDocument && !loadError && (
           <div className="editor-state">
@@ -937,6 +1241,7 @@ export function PdfEditor({ file }: { file: File }) {
                   pdfDocument={pdfDocument}
                   pageNumber={pageNumber}
                   activeTool={activeTool}
+                  textFormat={activeTextFormat}
                   annotations={annotations.filter(
                     (annotation) => annotation.pageNumber === pageNumber,
                   )}
@@ -947,7 +1252,7 @@ export function PdfEditor({ file }: { file: File }) {
                   onEditText={editText}
                   onAddShape={(shape) => addShape(pageNumber, shape)}
                   onUpdateAnnotation={updateAnnotation}
-                  onSelectAnnotation={setSelectedAnnotationId}
+                  onSelectAnnotation={selectAnnotation}
                 />
               )
             })}

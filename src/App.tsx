@@ -226,10 +226,6 @@ function App() {
       ) : (
         <main className="mx-auto grid w-full max-w-7xl items-center gap-12 px-4 py-12 sm:px-6 sm:py-16 lg:min-h-[calc(100svh-4rem)] lg:grid-cols-[0.92fr_1.08fr] lg:gap-20 lg:px-8 lg:py-20">
           <section className="mx-auto max-w-xl text-center lg:mx-0 lg:text-left">
-            <Badge className="mb-6 h-7 gap-1.5 rounded-full bg-[#fff0ed] px-3 font-medium text-[#c83625] shadow-none hover:bg-[#fff0ed]">
-              <Sparkles className="size-3.5" aria-hidden="true" />
-              Tu espacio de trabajo PDF
-            </Badge>
             <h1 className="text-balance text-[2.75rem] leading-[0.98] font-semibold tracking-[-0.055em] text-slate-950 sm:text-6xl lg:text-[4.6rem]">
               Tus PDFs, listos para trabajar.
             </h1>

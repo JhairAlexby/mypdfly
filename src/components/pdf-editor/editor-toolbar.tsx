@@ -1,7 +1,9 @@
 import {
   Blend,
   ChevronDown,
+  Download,
   Files,
+  LoaderCircle,
   MousePointer2,
   Move,
   Shapes,
@@ -29,24 +31,28 @@ export type EditorToolbarProps = {
   activeTool: EditorTool
   selectedAnnotation: Annotation | null
   hasPages: boolean
+  isExporting: boolean
   onToggleText: () => void
   onSelectShape: (shape: ShapeTool) => void
   onToggleBlur: () => void
   onOpenSignature: () => void
   onOpenOrganizer: () => void
   onRemoveSelected: () => void
+  onDownload: () => void
 }
 
 export function EditorToolbar({
   activeTool,
   selectedAnnotation,
   hasPages,
+  isExporting,
   onToggleText,
   onSelectShape,
   onToggleBlur,
   onOpenSignature,
   onOpenOrganizer,
   onRemoveSelected,
+  onDownload,
 }: EditorToolbarProps) {
   const shapeToolActive =
     activeTool !== null &&
@@ -142,6 +148,23 @@ export function EditorToolbar({
           aria-label="Eliminar elemento seleccionado"
         >
           <Trash2 aria-hidden="true" />
+        </Button>
+
+        <Separator orientation="vertical" className="mx-1 h-6" />
+
+        <Button
+          type="button"
+          size="sm"
+          onClick={onDownload}
+          disabled={!hasPages || isExporting}
+          aria-busy={isExporting}
+        >
+          {isExporting ? (
+            <LoaderCircle className="animate-spin" data-icon="inline-start" />
+          ) : (
+            <Download data-icon="inline-start" />
+          )}
+          {isExporting ? 'Preparando…' : 'Descargar'}
         </Button>
       </div>
 

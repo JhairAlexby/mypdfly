@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { FileText, LoaderCircle } from 'lucide-react'
+import { AlertCircle, FileText, LoaderCircle } from 'lucide-react'
 import {
   GlobalWorkerOptions,
   getDocument,
@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 
 import {
   defaultBlurFormat,
@@ -22,6 +23,10 @@ import {
   defaultTextFormat,
 } from './pdf-editor/constants'
 import { EditorToolbar } from './pdf-editor/editor-toolbar'
+import {
+  exportEditedPdf,
+  getEditedPdfFileName,
+} from './pdf-editor/export-pdf'
 import {
   BlurFormatToolbar,
   ShapeFormatToolbar,
@@ -84,6 +89,9 @@ export function PdfEditor({
   const [signatureDialogOpen, setSignatureDialogOpen] = useState(false)
   const [signatureTemplate, setSignatureTemplate] =
     useState<SignatureTemplate | null>(null)
+  const [isExporting, setIsExporting] = useState(false)
+  const [exportProgress, setExportProgress] = useState('')
+  const [exportError, setExportError] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -557,6 +565,73 @@ export function PdfEditor({
     setTextDraft(null)
   }
 
+  const getAnnotationsForExport = () => {
+    if (!textDraft) return annotations
+
+    const text = textDraft.value.trim()
+    if (textDraft.annotationId) {
+      if (!text) {
+        return annotations.filter(
+          (annotation) => annotation.id !== textDraft.annotationId,
+        )
+      }
+
+      return annotations.map((annotation) =>
+        annotation.id === textDraft.annotationId && annotation.type === 'text'
+          ? { ...annotation, text, format: textDraft.format }
+          : annotation,
+      )
+    }
+
+    if (!text) return annotations
+
+    return [
+      ...annotations,
+      {
+        id: crypto.randomUUID(),
+        pageId: textDraft.pageId,
+        type: 'text' as const,
+        x: textDraft.x,
+        y: textDraft.y,
+        text,
+        format: textDraft.format,
+        layer: getNextLayer(annotations, textDraft.pageId),
+      },
+    ]
+  }
+
+  const downloadEditedPdf = async () => {
+    if (isExporting || !orderedPages.length) return
+
+    setIsExporting(true)
+    setExportError('')
+    setExportProgress('Preparando el documento…')
+
+    try {
+      await exportEditedPdf({
+        sources: pdfSources,
+        pages: orderedPages,
+        annotations: getAnnotationsForExport(),
+        fileName: getEditedPdfFileName(
+          initialFile.name,
+          pdfSources.length > 1,
+        ),
+        onProgress: (currentPage, totalPages) => {
+          setExportProgress(`Preparando página ${currentPage} de ${totalPages}…`)
+        },
+      })
+      setExportProgress('PDF descargado correctamente.')
+    } catch (error) {
+      console.error(error)
+      setExportError(
+        'No pudimos generar el PDF. Intenta nuevamente con el documento abierto.',
+      )
+      setExportProgress('')
+    } finally {
+      setIsExporting(false)
+    }
+  }
+
   const clearEditingSelection = () => {
     setSelectedAnnotationId(null)
     setTextDraft(null)
@@ -609,6 +684,7 @@ export function PdfEditor({
         activeTool={activeTool}
         selectedAnnotation={selectedAnnotation}
         hasPages={Boolean(orderedPages.length)}
+        isExporting={isExporting}
         onToggleText={() => {
           setActiveTool((current) => (current === 'text' ? null : 'text'))
           clearEditingSelection()
@@ -632,7 +708,21 @@ export function PdfEditor({
           setOrganizerOpen(true)
         }}
         onRemoveSelected={removeSelectedAnnotation}
+        onDownload={() => void downloadEditedPdf()}
       />
+
+      {exportError && (
+        <Alert
+          variant="destructive"
+          className="rounded-none border-x-0 border-t-0 px-4"
+        >
+          <AlertCircle aria-hidden="true" />
+          <AlertDescription>{exportError}</AlertDescription>
+        </Alert>
+      )}
+      <p className="sr-only" aria-live="polite">
+        {exportProgress}
+      </p>
 
       <TextFormatToolbar
         visible={showTextFormatter}

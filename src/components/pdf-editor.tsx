@@ -57,6 +57,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
+import { Slider } from '@/components/ui/slider'
 
 GlobalWorkerOptions.workerSrc = pdfWorker
 
@@ -72,6 +73,12 @@ type TextFormat = {
   bold: boolean
   italic: boolean
   underline: boolean
+}
+
+type ShapeFormat = {
+  color: string
+  opacity: number
+  strokeWidth: number
 }
 
 type Point = {
@@ -95,6 +102,7 @@ type ShapeAnnotation = {
   type: ShapeTool
   start: Point
   end: Point
+  format: ShapeFormat
 }
 
 type Annotation = TextAnnotation | ShapeAnnotation
@@ -112,6 +120,7 @@ type ShapeDraft = {
   type: ShapeTool
   start: Point
   end: Point
+  format: ShapeFormat
 }
 
 type AnnotationInteraction =
@@ -136,6 +145,7 @@ type PdfPageProps = {
   pageNumber: number
   activeTool: EditorTool
   textFormat: TextFormat
+  shapeFormat: ShapeFormat
   annotations: Annotation[]
   selectedAnnotationId: string | null
   textDraft: TextDraft | null
@@ -175,6 +185,12 @@ const defaultTextFormat: TextFormat = {
   underline: false,
 }
 
+const defaultShapeFormat: ShapeFormat = {
+  color: '#ff5a45',
+  opacity: 1,
+  strokeWidth: 4,
+}
+
 const fontFamilies: Array<{
   value: TextFontFamily
   label: string
@@ -199,6 +215,8 @@ const textColors = [
   '#2563eb',
   '#7c3aed',
 ]
+
+const shapeStrokeWidths = [1, 2, 3, 4, 6, 8, 12]
 
 const getTextRenderStyle = (
   format: TextFormat,
@@ -266,8 +284,6 @@ function ShapeMark({
   ) => void
 }) {
   const savedAnnotation = 'id' in annotation ? annotation : null
-  const stroke = isSelected ? '#2563eb' : '#ff5a45'
-  const strokeWidth = isSelected ? 5 : 4
   const startX = annotation.start.x * 1000
   const startY = annotation.start.y * 1000
   const endX = annotation.end.x * 1000
@@ -295,9 +311,11 @@ function ShapeMark({
   }
 
   const shapeProps = {
-    fill: annotation.type === 'line' ? 'none' : 'rgba(255, 90, 69, 0.08)',
-    stroke,
-    strokeWidth,
+    fill: annotation.type === 'line' ? 'none' : annotation.format.color,
+    fillOpacity: annotation.type === 'line' ? undefined : 0.12,
+    stroke: annotation.format.color,
+    strokeWidth: annotation.format.strokeWidth,
+    opacity: annotation.format.opacity,
     strokeDasharray: isDraft ? '12 10' : undefined,
     vectorEffect: 'non-scaling-stroke' as const,
     onPointerDown: savedAnnotation ? handleMoveStart : undefined,
@@ -407,6 +425,7 @@ function PdfPage({
   pageNumber,
   activeTool,
   textFormat,
+  shapeFormat,
   annotations,
   selectedAnnotationId,
   textDraft,
@@ -505,7 +524,12 @@ function PdfPage({
     const point = getPoint(event, pageRef.current)
     event.currentTarget.setPointerCapture(event.pointerId)
     onSelectAnnotation(null)
-    setShapeDraft({ type: activeTool, start: point, end: point })
+    setShapeDraft({
+      type: activeTool,
+      start: point,
+      end: point,
+      format: shapeFormat,
+    })
   }
 
   const handlePageClick = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -813,6 +837,8 @@ export function PdfEditor({ file }: { file: File }) {
   const [textDraft, setTextDraft] = useState<TextDraft | null>(null)
   const [currentTextFormat, setCurrentTextFormat] =
     useState<TextFormat>(defaultTextFormat)
+  const [currentShapeFormat, setCurrentShapeFormat] =
+    useState<ShapeFormat>(defaultShapeFormat)
 
   useEffect(() => {
     let cancelled = false
@@ -843,10 +869,17 @@ export function PdfEditor({ file }: { file: File }) {
   )
   const selectedText =
     selectedAnnotation?.type === 'text' ? selectedAnnotation : null
+  const selectedShape =
+    selectedAnnotation && selectedAnnotation.type !== 'text'
+      ? selectedAnnotation
+      : null
   const activeTextFormat =
     textDraft?.format ?? selectedText?.format ?? currentTextFormat
+  const activeShapeFormat = selectedShape?.format ?? currentShapeFormat
   const showTextFormatter =
     activeTool === 'text' || Boolean(textDraft) || Boolean(selectedText)
+  const shapeToolActive = activeTool !== null && activeTool !== 'text'
+  const showShapeFormatter = shapeToolActive || Boolean(selectedShape)
 
   const selectAnnotation = (id: string | null) => {
     setSelectedAnnotationId(id)
@@ -855,6 +888,8 @@ export function PdfEditor({ file }: { file: File }) {
     const annotation = annotations.find((item) => item.id === id)
     if (annotation?.type === 'text') {
       setCurrentTextFormat(annotation.format)
+    } else if (annotation) {
+      setCurrentShapeFormat(annotation.format)
     }
   }
 
@@ -870,6 +905,23 @@ export function PdfEditor({ file }: { file: File }) {
       setAnnotations((current) =>
         current.map((annotation) =>
           annotation.id === selectedText.id && annotation.type === 'text'
+            ? {
+                ...annotation,
+                format: { ...annotation.format, ...patch },
+              }
+            : annotation,
+        ),
+      )
+    }
+  }
+
+  const applyShapeFormat = (patch: Partial<ShapeFormat>) => {
+    setCurrentShapeFormat((current) => ({ ...current, ...patch }))
+
+    if (selectedShape) {
+      setAnnotations((current) =>
+        current.map((annotation) =>
+          annotation.id === selectedShape.id && annotation.type !== 'text'
             ? {
                 ...annotation,
                 format: { ...annotation.format, ...patch },
@@ -942,6 +994,7 @@ export function PdfEditor({ file }: { file: File }) {
     }
     setAnnotations((current) => [...current, annotation])
     setSelectedAnnotationId(annotation.id)
+    setCurrentShapeFormat(annotation.format)
     setActiveTool(null)
   }
 
@@ -962,10 +1015,9 @@ export function PdfEditor({ file }: { file: File }) {
     setTextDraft(null)
   }
 
-  const shapeToolActive = activeTool !== null && activeTool !== 'text'
   return (
     <div
-      className={`pdf-editor ${showTextFormatter ? 'pdf-editor--text-format' : ''}`}
+      className={`pdf-editor ${showTextFormatter || showShapeFormatter ? 'pdf-editor--context-format' : ''}`}
     >
       <div className="editor-toolbar" aria-label="Herramientas de edición">
         <div className="flex min-w-max items-center gap-1.5">
@@ -1216,6 +1268,124 @@ export function PdfEditor({ file }: { file: File }) {
         </div>
       )}
 
+      {showShapeFormatter && (
+        <div
+          className="shape-format-toolbar"
+          role="toolbar"
+          aria-label="Formato de formas"
+        >
+          <span className="shape-format-label">Forma</span>
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shape-color-trigger"
+                aria-label="Cambiar color de la forma"
+              >
+                <Palette data-icon="inline-start" />
+                Color
+                <span
+                  className="shape-color-current"
+                  style={{ backgroundColor: activeShapeFormat.color }}
+                  aria-hidden="true"
+                />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-60 gap-3 p-3">
+              <div>
+                <p className="text-sm font-medium text-slate-900">Color de la forma</p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Se aplicará al borde y al relleno sutil.
+                </p>
+              </div>
+              <div className="grid grid-cols-8 gap-1.5">
+                {textColors.map((color) => (
+                  <Button
+                    key={color}
+                    variant="outline"
+                    size="icon-sm"
+                    className={`shape-color-swatch ${activeShapeFormat.color === color ? 'shape-color-swatch--active' : ''}`}
+                    style={{ backgroundColor: color }}
+                    onClick={() => applyShapeFormat({ color })}
+                    aria-label={`Usar color ${color} en la forma`}
+                  />
+                ))}
+              </div>
+              <label className="flex items-center justify-between gap-3 text-xs font-medium text-slate-600">
+                Personalizado
+                <span className="flex items-center gap-2 font-mono text-[11px] font-normal text-slate-500">
+                  {activeShapeFormat.color.toUpperCase()}
+                  <Input
+                    type="color"
+                    className="h-8 w-10 cursor-pointer p-1"
+                    value={activeShapeFormat.color}
+                    onChange={(event) =>
+                      applyShapeFormat({ color: event.target.value })
+                    }
+                    aria-label="Elegir color personalizado para la forma"
+                  />
+                </span>
+              </label>
+            </PopoverContent>
+          </Popover>
+
+          <div className="shape-opacity-control">
+            <span className="shape-control-label">Opacidad</span>
+            <Slider
+              className="w-28"
+              min={10}
+              max={100}
+              step={5}
+              value={[Math.round(activeShapeFormat.opacity * 100)]}
+              onValueChange={(value) =>
+                applyShapeFormat({ opacity: (value[0] ?? 100) / 100 })
+              }
+              aria-label="Opacidad de la forma"
+            />
+            <span className="shape-control-value">
+              {Math.round(activeShapeFormat.opacity * 100)}%
+            </span>
+          </div>
+
+          <Separator orientation="vertical" className="mx-0.5 h-6" />
+
+          <Select
+            value={String(activeShapeFormat.strokeWidth)}
+            onValueChange={(value) =>
+              applyShapeFormat({ strokeWidth: Number(value) })
+            }
+          >
+            <SelectTrigger
+              size="sm"
+              className="shape-width-select"
+              aria-label="Ancho del borde"
+            >
+              <Minus className="size-3.5" aria-hidden="true" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper" align="start" className="min-w-36">
+              {shapeStrokeWidths.map((width) => (
+                <SelectItem key={width} value={String(width)}>
+                  {width} px
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => applyShapeFormat(defaultShapeFormat)}
+            aria-label="Restablecer formato de la forma"
+            title="Restablecer formato"
+          >
+            <RotateCcw aria-hidden="true" />
+          </Button>
+        </div>
+      )}
+
       <div className="editor-canvas-area">
         {!pdfDocument && !loadError && (
           <div className="editor-state">
@@ -1242,6 +1412,7 @@ export function PdfEditor({ file }: { file: File }) {
                   pageNumber={pageNumber}
                   activeTool={activeTool}
                   textFormat={activeTextFormat}
+                  shapeFormat={activeShapeFormat}
                   annotations={annotations.filter(
                     (annotation) => annotation.pageNumber === pageNumber,
                   )}

@@ -34,20 +34,196 @@
   transform: scale(1.01);
 }
 
-.pdf-viewer-shell {
-  overflow: hidden;
-  border-radius: 0.75rem;
-  background: white;
-  box-shadow: 0 10px 40px rgba(30, 41, 59, 0.1);
+.pdf-editor {
+  display: flex;
+  min-height: calc(100svh - 12.5rem);
+  flex-direction: column;
+  background: #eef0f5;
 }
 
-.pdf-viewer {
+.editor-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  min-height: 3.25rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  overflow-x: auto;
+  border-bottom: 1px solid #e2e8f0;
+  background: rgba(255, 255, 255, 0.96);
+  padding: 0.55rem 1rem;
+  backdrop-filter: blur(14px);
+  scrollbar-width: none;
+}
+
+.editor-toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+.editor-tool-active {
+  background: #fff0ed !important;
+  color: #c83625 !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 90, 69, 0.18);
+}
+
+.editor-canvas-area {
+  height: calc(100svh - 18.75rem);
+  min-height: 33rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 2rem 1rem 3rem;
+}
+
+.editor-state {
+  display: flex;
+  min-height: 28rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  color: #64748b;
+  font-size: 0.875rem;
+}
+
+.pdf-pages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2.75rem;
+}
+
+.editor-page-wrap {
+  position: relative;
+  width: min(100%, 52rem);
+}
+
+.editor-page {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: white;
+  box-shadow:
+    0 18px 50px rgba(30, 41, 59, 0.16),
+    0 0 0 1px rgba(148, 163, 184, 0.24);
+  touch-action: pan-y;
+  user-select: none;
+}
+
+.editor-page--text,
+.editor-page--shape,
+.editor-page--interacting {
+  touch-action: none;
+}
+
+.editor-page--text {
+  cursor: text;
+}
+
+.editor-page--shape {
+  cursor: crosshair;
+}
+
+.pdf-page-canvas {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
-  height: calc(100svh - 12.5rem);
-  min-height: 34rem;
-  border: 0;
+  height: 100%;
+  pointer-events: none;
+}
+
+.annotation-svg {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.annotation-shape,
+.annotation-shape-hitbox {
+  cursor: move;
+  pointer-events: all;
+}
+
+.annotation-resize-handle {
+  cursor: nwse-resize;
+  pointer-events: all;
+  filter: drop-shadow(0 1px 2px rgba(15, 23, 42, 0.22));
+}
+
+.annotation-selection-box {
+  pointer-events: none;
+}
+
+.text-annotation {
+  position: absolute;
+  z-index: 10;
+  max-width: 70%;
+  transform: translateY(-8%);
+  border: 1px solid transparent;
+  border-radius: 0.3rem;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 0.12rem 0.28rem;
+  color: #111827;
+  font-family: Arial, sans-serif;
+  font-size: clamp(0.72rem, 1.6vw, 1.05rem);
+  line-height: 1.3;
+  text-align: left;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+  cursor: move;
+  touch-action: none;
+}
+
+.text-annotation--selected {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.16);
+}
+
+.text-annotation:focus-visible {
+  border-color: #2563eb;
+  outline: 2px solid rgba(37, 99, 235, 0.24);
+  outline-offset: 2px;
+}
+
+.text-draft {
+  position: absolute;
+  z-index: 20;
+  width: min(13rem, 28%);
+  min-width: 8rem;
+  transform: translateY(-8%);
+  border-color: #ff5a45;
   background: white;
+  box-shadow: 0 6px 22px rgba(15, 23, 42, 0.16);
+  font-family: Arial, sans-serif;
+}
+
+.editor-page-number {
+  position: absolute;
+  bottom: -1.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 1px solid #d9dee8;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 0.6875rem;
+  font-weight: 500;
+}
+
+.editor-statusbar {
+  display: flex;
+  min-height: 2.25rem;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid #e2e8f0;
+  background: white;
+  padding: 0 1rem;
+  color: #64748b;
+  font-size: 0.7rem;
 }
 
 @media (max-width: 639px) {
@@ -56,8 +232,25 @@
     padding: 1.5rem;
   }
 
-  .pdf-viewer {
-    height: calc(100svh - 13.5rem);
-    min-height: 30rem;
+  .pdf-editor {
+    min-height: calc(100svh - 14rem);
+  }
+
+  .editor-toolbar {
+    padding-inline: 0.65rem;
+  }
+
+  .editor-canvas-area {
+    height: calc(100svh - 20rem);
+    min-height: 28rem;
+    padding: 1.25rem 0.65rem 2.75rem;
+  }
+
+  .pdf-pages {
+    gap: 2.5rem;
+  }
+
+  .text-draft {
+    width: 42%;
   }
 }

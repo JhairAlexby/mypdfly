@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent, KeyboardEvent } from 'react'
 import {
   AlertCircle,
-  ArrowUpRight,
   Check,
   Eye,
   FileText,
@@ -29,6 +28,12 @@ import {
 } from '@/components/ui/card'
 import './App.css'
 
+const PdfEditor = lazy(() =>
+  import('@/components/pdf-editor').then((module) => ({
+    default: module.PdfEditor,
+  })),
+)
+
 const formatFileSize = (bytes: number) => {
   if (bytes < 1024 * 1024) {
     return `${Math.max(1, Math.round(bytes / 1024))} KB`
@@ -44,17 +49,6 @@ function App() {
   const [file, setFile] = useState<File | null>(null)
   const [error, setError] = useState('')
   const [isDragging, setIsDragging] = useState(false)
-
-  const previewUrl = useMemo(
-    () => (file ? URL.createObjectURL(file) : ''),
-    [file],
-  )
-
-  useEffect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl)
-    }
-  }, [previewUrl])
 
   const selectFile = () => inputRef.current?.click()
 
@@ -129,7 +123,7 @@ function App() {
         </div>
       </header>
 
-      {file && previewUrl ? (
+      {file ? (
         <main className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
           <Card className="gap-0 overflow-hidden rounded-2xl border-0 bg-white py-0 shadow-[0_28px_80px_rgba(39,45,76,0.12)] ring-1 ring-slate-200/90">
             <CardHeader className="flex flex-row items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 sm:px-5">
@@ -145,7 +139,7 @@ function App() {
                     {formatFileSize(file.size)}
                     <span aria-hidden="true">•</span>
                     <span className="inline-flex items-center gap-1 text-emerald-700">
-                      <Check className="size-3" aria-hidden="true" /> Listo para visualizar
+                      <Check className="size-3" aria-hidden="true" /> Listo para editar
                     </span>
                   </CardDescription>
                 </div>
@@ -173,28 +167,19 @@ function App() {
               </div>
             </CardHeader>
 
-            <CardContent className="bg-[#eef0f5] p-2 sm:p-4">
-              <div className="pdf-viewer-shell">
-                <object
-                  className="pdf-viewer"
-                  data={`${previewUrl}#view=FitH`}
-                  type="application/pdf"
-                  aria-label={`Vista previa de ${file.name}`}
-                >
-                  <div className="flex h-full min-h-[28rem] flex-col items-center justify-center gap-4 px-6 text-center">
-                    <FileText className="size-10 text-slate-400" aria-hidden="true" />
-                    <p className="max-w-md text-sm text-slate-600">
-                      Tu navegador no puede mostrar este PDF dentro de la página.
-                    </p>
-                    <Button asChild>
-                      <a href={previewUrl} target="_blank" rel="noreferrer">
-                        Abrir PDF
-                        <ArrowUpRight data-icon="inline-end" />
-                      </a>
-                    </Button>
+            <CardContent className="p-0">
+              <Suspense
+                fallback={
+                  <div className="editor-state min-h-[32rem] bg-[#eef0f5]">
+                    Preparando el editor…
                   </div>
-                </object>
-              </div>
+                }
+              >
+                <PdfEditor
+                  key={`${file.name}-${file.size}-${file.lastModified}`}
+                  file={file}
+                />
+              </Suspense>
             </CardContent>
 
             <CardFooter className="flex flex-wrap justify-between gap-3 border-t border-slate-200 bg-white px-4 py-3 sm:px-5">

@@ -16,6 +16,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { AppFooter } from '@/components/app-footer'
 import { AppHeader } from '@/components/app-header'
+import { NotFound } from '@/components/not-found'
 import {
   Card,
   CardContent,
@@ -42,7 +43,17 @@ const formatFileSize = (bytes: number) => {
   }).format(bytes / (1024 * 1024))} MB`
 }
 
-function App() {
+const normalizePath = (path: string) => path.replace(/\/+$/, '') || '/'
+
+const isEditorPath = (pathname: string) => {
+  const currentPath = normalizePath(pathname)
+  const basePath = normalizePath(import.meta.env.BASE_URL)
+  const indexPath = `${basePath === '/' ? '' : basePath}/index.html`
+
+  return currentPath === basePath || currentPath === indexPath
+}
+
+function PdfWorkspaceApp() {
   const inputRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [workspaceId, setWorkspaceId] = useState(() => crypto.randomUUID())
@@ -307,6 +318,27 @@ function App() {
       <AppFooter />
     </div>
   )
+}
+
+function App() {
+  if (!isEditorPath(window.location.pathname)) {
+    return (
+      <div className="flex min-h-svh flex-col overflow-hidden text-foreground">
+        <AppHeader />
+        <NotFound
+          homeHref={import.meta.env.BASE_URL}
+          onGoBack={
+            window.history.length > 1
+              ? () => window.history.back()
+              : undefined
+          }
+        />
+        <AppFooter />
+      </div>
+    )
+  }
+
+  return <PdfWorkspaceApp />
 }
 
 export default App

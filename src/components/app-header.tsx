@@ -1,4 +1,4 @@
-import { Files, LockKeyhole } from 'lucide-react'
+import { LockKeyhole } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { GitHubButton } from '@/components/github-button'
 import logo from '@/assets/logo-mypdfly.webp'

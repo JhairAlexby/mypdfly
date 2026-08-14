@@ -8,6 +8,7 @@ import {
   ImageData,
   Path2D,
 } from '@napi-rs/canvas'
+import { unzipSync } from 'fflate'
 import { PDFDocument, rgb } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 
@@ -27,18 +28,24 @@ type TestAnchor = {
 }
 
 let lastDownloadUrl: string | null = null
+let lastDownloadName: string | null = null
 
 const createTestCanvas = (width: number, height: number) => {
   const canvas = createCanvas(width, height)
 
   Object.defineProperty(canvas, 'toBlob', {
     configurable: true,
-    value: (callback: (blob: Blob | null) => void) => {
-      callback(
-        new Blob([canvas.toBuffer('image/png')], {
-          type: 'image/png',
-        }),
-      )
+    value: (
+      callback: (blob: Blob | null) => void,
+      type = 'image/png',
+      quality?: number,
+    ) => {
+      const buffer =
+        type === 'image/jpeg'
+          ? canvas.toBuffer('image/jpeg', Math.round((quality ?? 0.92) * 100))
+          : canvas.toBuffer('image/png')
+
+      callback(new Blob([buffer], { type }))
     },
   })
 
@@ -58,6 +65,7 @@ const documentShim = {
         download: '',
         click: () => {
           lastDownloadUrl = anchor.href
+          lastDownloadName = anchor.download
         },
         remove: () => undefined,
       }
@@ -100,6 +108,9 @@ const { renderEditedPage } = await import(
 )
 const { exportEditedPdf } = await import(
   '../src/components/pdf-editor/export-pdf.ts'
+)
+const { exportEditedImages } = await import(
+  '../src/components/pdf-editor/export-images.ts'
 )
 
 const createFixture = async () => {
@@ -303,6 +314,89 @@ test('exporta las páginas en el orden recibido', async () => {
       [180, 120],
       [240, 140],
     ])
+  } finally {
+    await loadingTask.destroy()
+  }
+})
+
+test('descarga directamente la imagen cuando solo hay una página', async () => {
+  const { loadingTask, source } = await createFixture()
+
+  try {
+    lastDownloadUrl = null
+    lastDownloadName = null
+
+    await exportEditedImages({
+      annotations: [],
+      fileName: 'fixture.pdf',
+      format: 'png',
+      pages: [getPageReference(1)],
+      sources: [source],
+    })
+
+    assert.equal(lastDownloadName, 'fixture-editado.png')
+    assert.ok(lastDownloadUrl)
+
+    const response = await fetch(lastDownloadUrl)
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    assert.deepEqual([...bytes.slice(0, 8)], [
+      0x89,
+      0x50,
+      0x4e,
+      0x47,
+      0x0d,
+      0x0a,
+      0x1a,
+      0x0a,
+    ])
+  } finally {
+    await loadingTask.destroy()
+  }
+})
+
+test('empaqueta varias páginas en un ZIP JPEG ordenado', async () => {
+  const { loadingTask, source } = await createFixture()
+  const orderedPages = [
+    getPageReference(3),
+    getPageReference(1),
+    getPageReference(2),
+  ]
+  const progress: string[] = []
+
+  try {
+    lastDownloadUrl = null
+    lastDownloadName = null
+
+    await exportEditedImages({
+      annotations: [],
+      fileName: 'fixture.pdf',
+      format: 'jpeg',
+      onProgress: (currentPage, totalPages) => {
+        progress.push(`${currentPage}/${totalPages}`)
+      },
+      pages: orderedPages,
+      sources: [source],
+    })
+
+    assert.deepEqual(progress, ['1/3', '2/3', '3/3'])
+    assert.equal(lastDownloadName, 'fixture-editado.zip')
+    assert.ok(lastDownloadUrl)
+
+    const response = await fetch(lastDownloadUrl)
+    const archive = unzipSync(
+      new Uint8Array(await response.arrayBuffer()),
+    )
+    const names = Object.keys(archive)
+    const expectedNames = [
+      'fixture-editado-pagina-01.jpg',
+      'fixture-editado-pagina-02.jpg',
+      'fixture-editado-pagina-03.jpg',
+    ]
+
+    assert.deepEqual(names, expectedNames)
+    for (const name of expectedNames) {
+      assert.deepEqual([...archive[name].slice(0, 3)], [0xff, 0xd8, 0xff])
+    }
   } finally {
     await loadingTask.destroy()
   }

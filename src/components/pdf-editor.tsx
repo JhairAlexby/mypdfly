@@ -27,6 +27,7 @@ import {
   exportEditedPdf,
   getEditedPdfFileName,
 } from './pdf-editor/export-pdf'
+import { exportEditedImages } from './pdf-editor/export-images'
 import {
   BlurFormatToolbar,
   ShapeFormatToolbar,
@@ -36,6 +37,7 @@ import {
 import { PageOrganizerDialog } from './pdf-editor/page-organizer-dialog'
 import { PdfPage } from './pdf-editor/pdf-page'
 import { SignaturePad } from './pdf-editor/signature-pad'
+import type { ImageFormat } from './pdf-editor/image-encoders'
 import type {
   Annotation,
   BlurAnnotation,
@@ -653,6 +655,44 @@ export function PdfEditor({
     }
   }
 
+  const downloadEditedImages = async (format: ImageFormat) => {
+    if (isExporting || !orderedPages.length) return
+
+    const formatLabel = format.toUpperCase()
+    setIsExporting(true)
+    setExportError('')
+    setExportProgress(`Preparando imágenes ${formatLabel}…`)
+
+    try {
+      await exportEditedImages({
+        annotations: getAnnotationsForExport(),
+        combined: pdfSources.length > 1,
+        fileName: initialFile.name,
+        format,
+        onProgress: (currentPage, totalPages) => {
+          setExportProgress(
+            `Preparando imagen ${currentPage} de ${totalPages}…`,
+          )
+        },
+        pages: orderedPages,
+        sources: pdfSources,
+      })
+      setExportProgress(
+        orderedPages.length === 1
+          ? `${formatLabel} descargado correctamente.`
+          : `ZIP de ${formatLabel} descargado correctamente.`,
+      )
+    } catch (error) {
+      console.error(error)
+      setExportError(
+        `No pudimos generar las imágenes ${formatLabel}. Intenta nuevamente con el documento abierto.`,
+      )
+      setExportProgress('')
+    } finally {
+      setIsExporting(false)
+    }
+  }
+
   const clearEditingSelection = () => {
     setSelectedAnnotationId(null)
     setTextDraft(null)
@@ -745,7 +785,8 @@ export function PdfEditor({
           setOrganizerOpen(true)
         }}
         onRemoveSelected={removeSelectedAnnotation}
-        onDownload={() => void downloadEditedPdf()}
+        onDownloadPdf={() => void downloadEditedPdf()}
+        onDownloadImages={(format) => void downloadEditedImages(format)}
         isFullscreen={isFullscreen}
         isFullscreenSupported={isFullscreenSupported}
         onToggleFullscreen={() => void toggleFullscreen()}

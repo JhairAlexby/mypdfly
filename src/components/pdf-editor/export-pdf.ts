@@ -3,6 +3,7 @@ import type {
   PdfPageReference,
   PdfSource,
 } from './types'
+import { downloadBlob, getEditedDocumentBaseName } from './download-utils'
 import { encodeCanvasToPng } from './image-encoders'
 import { renderEditedPage } from './page-compositor'
 
@@ -14,25 +15,8 @@ type ExportPdfOptions = {
   onProgress?: (currentPage: number, totalPages: number) => void
 }
 
-const downloadBlob = (blob: Blob, fileName: string) => {
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = fileName
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
-
 export const getEditedPdfFileName = (fileName: string, combined: boolean) => {
-  const baseName = fileName
-    .replace(/\.pdf$/i, '')
-    .replace(/[\\/:*?"<>|]+/g, '-')
-    .replace(/\s+/g, ' ')
-    .trim()
-  const safeBaseName = baseName || 'documento'
-  return `${safeBaseName}${combined ? '-combinado' : ''}-editado.pdf`
+  return `${getEditedDocumentBaseName(fileName, combined)}.pdf`
 }
 
 export async function exportEditedPdf({

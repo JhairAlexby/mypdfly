@@ -30,7 +30,7 @@ mypdfly es una aplicación web para visualizar, editar, combinar y descargar doc
 - Difuminar secciones del documento y ajustar la intensidad del efecto.
 - Crear firmas dibujadas con mouse, touchpad, lápiz o pantalla táctil.
 - Combinar varios PDF y reorganizar sus páginas.
-- Descargar el documento editado como PDF, PNG o JPEG; las exportaciones de varias páginas se agrupan en un ZIP.
+- Descargar el documento editado como PDF, PNG o JPEG desde un diálogo con progreso y cancelación; las exportaciones de varias páginas se agrupan en un ZIP.
 - Editar en pantalla completa.
 - Mantener el procesamiento de los documentos en el dispositivo del usuario.
 
@@ -79,7 +79,7 @@ pnpm preview
 | `pnpm dev` | Inicia el servidor de desarrollo con HMR. |
 | `pnpm build` | Comprueba TypeScript y genera la versión de producción. |
 | `pnpm lint` | Ejecuta ESLint sobre el proyecto. |
-| `pnpm test` | Ejecuta las pruebas visuales, de orden, codificación PNG/JPEG y ZIP. |
+| `pnpm test` | Ejecuta las pruebas visuales, de orden, codificación PNG/JPEG, ZIP y cancelación. |
 | `pnpm preview` | Sirve localmente la compilación de producción. |
 
 ## Privacidad

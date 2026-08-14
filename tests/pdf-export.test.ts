@@ -112,6 +112,9 @@ const { exportEditedPdf } = await import(
 const { exportEditedImages } = await import(
   '../src/components/pdf-editor/export-images.ts'
 )
+const { ExportCancelledError } = await import(
+  '../src/components/pdf-editor/export-cancellation.ts'
+)
 
 const createFixture = async () => {
   const fixturePdf = await PDFDocument.create()
@@ -397,6 +400,86 @@ test('empaqueta varias páginas en un ZIP JPEG ordenado', async () => {
     for (const name of expectedNames) {
       assert.deepEqual([...archive[name].slice(0, 3)], [0xff, 0xd8, 0xff])
     }
+  } finally {
+    await loadingTask.destroy()
+  }
+})
+
+test('cancela la exportación antes de iniciar la composición', async () => {
+  const { loadingTask, source } = await createFixture()
+  const controller = new AbortController()
+  controller.abort()
+
+  try {
+    lastDownloadUrl = null
+
+    await assert.rejects(
+      exportEditedImages({
+        annotations: [],
+        fileName: 'fixture.pdf',
+        format: 'png',
+        pages: [getPageReference(1)],
+        signal: controller.signal,
+        sources: [source],
+      }),
+      (error) => error instanceof ExportCancelledError,
+    )
+    assert.equal(lastDownloadUrl, null)
+  } finally {
+    await loadingTask.destroy()
+  }
+})
+
+test('cancela la exportación entre páginas y no descarga un ZIP parcial', async () => {
+  const { loadingTask, source } = await createFixture()
+  const controller = new AbortController()
+
+  try {
+    lastDownloadUrl = null
+
+    await assert.rejects(
+      exportEditedImages({
+        annotations: [],
+        fileName: 'fixture.pdf',
+        format: 'png',
+        onProgress: (currentPage) => {
+          if (currentPage === 1) controller.abort()
+        },
+        pages: [
+          getPageReference(1),
+          getPageReference(2),
+          getPageReference(3),
+        ],
+        signal: controller.signal,
+        sources: [source],
+      }),
+      (error) => error instanceof ExportCancelledError,
+    )
+    assert.equal(lastDownloadUrl, null)
+  } finally {
+    await loadingTask.destroy()
+  }
+})
+
+test('cancela la exportación PDF antes de guardar el resultado', async () => {
+  const { loadingTask, source } = await createFixture()
+  const controller = new AbortController()
+
+  try {
+    lastDownloadUrl = null
+
+    await assert.rejects(
+      exportEditedPdf({
+        annotations: [],
+        fileName: 'fixture-editado.pdf',
+        onProgress: () => controller.abort(),
+        pages: [getPageReference(1)],
+        signal: controller.signal,
+        sources: [source],
+      }),
+      (error) => error instanceof ExportCancelledError,
+    )
+    assert.equal(lastDownloadUrl, null)
   } finally {
     await loadingTask.destroy()
   }

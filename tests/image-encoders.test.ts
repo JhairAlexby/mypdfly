@@ -9,6 +9,7 @@ import {
   encodeCanvasToJpeg,
   encodeCanvasToPng,
 } from '../src/components/pdf-editor/image-encoders.ts'
+import { ExportCancelledError } from '../src/components/pdf-editor/export-cancellation.ts'
 
 const createEncodedCanvas = () => {
   const canvas = createCanvas(256, 256)
@@ -104,5 +105,24 @@ test('rechaza un blob cuyo MIME no coincide con el formato solicitado', async ()
   await assert.rejects(
     encodeCanvasToJpeg(canvas),
     /image\/png.*image\/jpeg/,
+  )
+})
+
+test('cancela una codificación pendiente sin esperar a toBlob', async () => {
+  const controller = new AbortController()
+  const canvas = {
+    toBlob: (callback: BlobCallback) => {
+      setTimeout(() => {
+        callback(new Blob([new Uint8Array([1])], { type: 'image/png' }))
+      }, 20)
+    },
+  } as unknown as HTMLCanvasElement
+  const encoding = encodeCanvasToPng(canvas, { signal: controller.signal })
+
+  controller.abort()
+
+  await assert.rejects(
+    encoding,
+    (error) => error instanceof ExportCancelledError,
   )
 })

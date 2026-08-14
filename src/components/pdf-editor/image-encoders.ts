@@ -1,7 +1,10 @@
+import { ExportCancelledError } from './export-cancellation'
+
 export type ImageFormat = 'jpeg' | 'png'
 
 export type ImageEncoderOptions = {
   quality?: number
+  signal?: AbortSignal
 }
 
 export const DEFAULT_JPEG_QUALITY = 0.9
@@ -23,30 +26,60 @@ const encodeCanvas = (
   canvas: HTMLCanvasElement,
   mimeType: 'image/jpeg' | 'image/png',
   quality?: number,
+  signal?: AbortSignal,
 ) =>
   new Promise<Blob>((resolve, reject) => {
+    let settled = false
+
+    const cleanup = () => signal?.removeEventListener('abort', onAbort)
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      callback()
+    }
+    const onAbort = () =>
+      finish(() => reject(new ExportCancelledError()))
+
+    if (signal?.aborted) {
+      onAbort()
+      return
+    }
+
+    signal?.addEventListener('abort', onAbort, { once: true })
+
     const onEncoded = (blob: Blob | null) => {
+      if (settled) return
+
       if (!blob) {
-        reject(new Error(`No se pudo codificar la imagen como ${mimeType}.`))
+        finish(() =>
+          reject(new Error(`No se pudo codificar la imagen como ${mimeType}.`)),
+        )
         return
       }
 
       if (blob.type.toLowerCase() !== mimeType) {
-        reject(
-          new Error(
-            `El codificador devolvió ${blob.type || 'un tipo desconocido'} en lugar de ${mimeType}.`,
+        finish(() =>
+          reject(
+            new Error(
+              `El codificador devolvió ${blob.type || 'un tipo desconocido'} en lugar de ${mimeType}.`,
+            ),
           ),
         )
         return
       }
 
-      resolve(blob)
+      finish(() => resolve(blob))
     }
 
-    if (mimeType === 'image/jpeg') {
-      canvas.toBlob(onEncoded, mimeType, quality)
-    } else {
-      canvas.toBlob(onEncoded, mimeType)
+    try {
+      if (mimeType === 'image/jpeg') {
+        canvas.toBlob(onEncoded, mimeType, quality)
+      } else {
+        canvas.toBlob(onEncoded, mimeType)
+      }
+    } catch (error) {
+      finish(() => reject(error))
     }
   })
 
@@ -61,13 +94,16 @@ export const encodeCanvasAsImage = (
       ? normalizeJpegQuality(options.quality ?? DEFAULT_JPEG_QUALITY)
       : undefined
 
-  return encodeCanvas(canvas, mimeType, quality)
+  return encodeCanvas(canvas, mimeType, quality, options.signal)
 }
 
-export const encodeCanvasToPng = (canvas: HTMLCanvasElement) =>
-  encodeCanvasAsImage(canvas, 'png')
+export const encodeCanvasToPng = (
+  canvas: HTMLCanvasElement,
+  options: ImageEncoderOptions = {},
+) => encodeCanvasAsImage(canvas, 'png', options)
 
 export const encodeCanvasToJpeg = (
   canvas: HTMLCanvasElement,
   quality = DEFAULT_JPEG_QUALITY,
-) => encodeCanvasAsImage(canvas, 'jpeg', { quality })
+  options: Omit<ImageEncoderOptions, 'quality'> = {},
+) => encodeCanvasAsImage(canvas, 'jpeg', { ...options, quality })

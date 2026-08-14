@@ -29,6 +29,15 @@ import {
 } from './pdf-editor/export-pdf'
 import { exportEditedImages } from './pdf-editor/export-images'
 import {
+  ExportDialog,
+  type ExportDialogFormat,
+  type ExportDialogPhase,
+} from './pdf-editor/export-dialog'
+import {
+  ExportCancelledError,
+  isExportCancelledError,
+} from './pdf-editor/export-cancellation'
+import {
   BlurFormatToolbar,
   ShapeFormatToolbar,
   SignatureFormatToolbar,
@@ -37,7 +46,6 @@ import {
 import { PageOrganizerDialog } from './pdf-editor/page-organizer-dialog'
 import { PdfPage } from './pdf-editor/pdf-page'
 import { SignaturePad } from './pdf-editor/signature-pad'
-import type { ImageFormat } from './pdf-editor/image-encoders'
 import type {
   Annotation,
   BlurAnnotation,
@@ -91,9 +99,18 @@ export function PdfEditor({
   const [signatureDialogOpen, setSignatureDialogOpen] = useState(false)
   const [signatureTemplate, setSignatureTemplate] =
     useState<SignatureTemplate | null>(null)
+  const [exportDialogOpen, setExportDialogOpen] = useState(false)
+  const [selectedExportFormat, setSelectedExportFormat] =
+    useState<ExportDialogFormat | null>(null)
+  const [exportPhase, setExportPhase] =
+    useState<ExportDialogPhase>('idle')
+  const [exportCurrentPage, setExportCurrentPage] = useState(0)
+  const [exportTotalPages, setExportTotalPages] = useState(0)
+  const [exportCancelRequested, setExportCancelRequested] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState('')
   const [exportError, setExportError] = useState('')
+  const exportControllerRef = useRef<AbortController | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [isFullscreenSupported, setIsFullscreenSupported] = useState(false)
   const editorRef = useRef<HTMLDivElement>(null)
@@ -167,6 +184,7 @@ export function PdfEditor({
 
     return () => {
       isMountedRef.current = false
+      exportControllerRef.current?.abort()
       loadingTasks.forEach((task) => {
         void task.destroy()
       })
@@ -623,74 +641,127 @@ export function PdfEditor({
     ]
   }
 
-  const downloadEditedPdf = async () => {
+  const openExportDialog = (format: ExportDialogFormat) => {
     if (isExporting || !orderedPages.length) return
 
-    setIsExporting(true)
+    setSelectedExportFormat(format)
+    setExportDialogOpen(true)
+    setExportPhase('idle')
+    setExportCurrentPage(0)
+    setExportTotalPages(orderedPages.length)
+    setExportCancelRequested(false)
+    setExportProgress('')
     setExportError('')
-    setExportProgress('Preparando el documento…')
+  }
 
-    try {
-      await exportEditedPdf({
-        sources: pdfSources,
-        pages: orderedPages,
-        annotations: getAnnotationsForExport(),
-        fileName: getEditedPdfFileName(
-          initialFile.name,
-          pdfSources.length > 1,
-        ),
-        onProgress: (currentPage, totalPages) => {
-          setExportProgress(`Preparando página ${currentPage} de ${totalPages}…`)
-        },
-      })
-      setExportProgress('PDF descargado correctamente.')
-    } catch (error) {
-      console.error(error)
-      setExportError(
-        'No pudimos generar el PDF. Intenta nuevamente con el documento abierto.',
-      )
+  const handleExportDialogOpenChange = (open: boolean) => {
+    if (isExporting && !open) return
+
+    setExportDialogOpen(open)
+    if (!open) {
+      setSelectedExportFormat(null)
+      setExportPhase('idle')
+      setExportCurrentPage(0)
+      setExportTotalPages(0)
+      setExportCancelRequested(false)
       setExportProgress('')
-    } finally {
-      setIsExporting(false)
+      setExportError('')
     }
   }
 
-  const downloadEditedImages = async (format: ImageFormat) => {
-    if (isExporting || !orderedPages.length) return
+  const startExport = async () => {
+    if (isExporting || !orderedPages.length || !selectedExportFormat) return
 
+    const format = selectedExportFormat
     const formatLabel = format.toUpperCase()
+    const controller = new AbortController()
+    exportControllerRef.current = controller
     setIsExporting(true)
+    setExportPhase('running')
+    setExportCurrentPage(0)
+    setExportTotalPages(orderedPages.length)
+    setExportCancelRequested(false)
     setExportError('')
-    setExportProgress(`Preparando imágenes ${formatLabel}…`)
+    setExportProgress(`Preparando ${formatLabel}…`)
 
     try {
-      await exportEditedImages({
-        annotations: getAnnotationsForExport(),
-        combined: pdfSources.length > 1,
-        fileName: initialFile.name,
-        format,
-        onProgress: (currentPage, totalPages) => {
-          setExportProgress(
-            `Preparando imagen ${currentPage} de ${totalPages}…`,
-          )
-        },
-        pages: orderedPages,
-        sources: pdfSources,
-      })
+      const onProgress = (currentPage: number, totalPages: number) => {
+        setExportCurrentPage(currentPage)
+        setExportTotalPages(totalPages)
+        setExportProgress(
+          format === 'pdf'
+            ? `Preparando página ${currentPage} de ${totalPages}…`
+            : `Preparando imagen ${currentPage} de ${totalPages}…`,
+        )
+      }
+
+      if (format === 'pdf') {
+        await exportEditedPdf({
+          sources: pdfSources,
+          pages: orderedPages,
+          annotations: getAnnotationsForExport(),
+          fileName: getEditedPdfFileName(
+            initialFile.name,
+            pdfSources.length > 1,
+          ),
+          onProgress,
+          signal: controller.signal,
+        })
+      } else {
+        await exportEditedImages({
+          annotations: getAnnotationsForExport(),
+          combined: pdfSources.length > 1,
+          fileName: initialFile.name,
+          format,
+          onProgress,
+          pages: orderedPages,
+          signal: controller.signal,
+          sources: pdfSources,
+        })
+      }
+
+      if (!isMountedRef.current) return
+      if (controller.signal.aborted) throw new ExportCancelledError()
+      setExportPhase('success')
       setExportProgress(
-        orderedPages.length === 1
-          ? `${formatLabel} descargado correctamente.`
-          : `ZIP de ${formatLabel} descargado correctamente.`,
+        format === 'pdf'
+          ? 'PDF descargado correctamente.'
+          : orderedPages.length === 1
+            ? `${formatLabel} descargado correctamente.`
+            : `ZIP de ${formatLabel} descargado correctamente.`,
       )
     } catch (error) {
+      if (!isMountedRef.current) return
+      if (isExportCancelledError(error) || controller.signal.aborted) {
+        setExportPhase('cancelled')
+        setExportProgress('Exportación cancelada.')
+        return
+      }
+
       console.error(error)
+      setExportPhase('error')
       setExportError(
-        `No pudimos generar las imágenes ${formatLabel}. Intenta nuevamente con el documento abierto.`,
+        format === 'pdf'
+          ? 'No pudimos generar el PDF. Intenta nuevamente con el documento abierto.'
+          : `No pudimos generar las imágenes ${formatLabel}. Intenta nuevamente con el documento abierto.`,
       )
       setExportProgress('')
     } finally {
-      setIsExporting(false)
+      if (isMountedRef.current) {
+        if (exportControllerRef.current === controller) {
+          exportControllerRef.current = null
+        }
+        setExportCancelRequested(false)
+        setIsExporting(false)
+      }
     }
+  }
+
+  const cancelExport = () => {
+    if (!isExporting) return
+    setExportCancelRequested(true)
+    setExportProgress('Cancelando…')
+    exportControllerRef.current?.abort()
   }
 
   const clearEditingSelection = () => {
@@ -757,6 +828,21 @@ export function PdfEditor({
         </DialogContent>
       </Dialog>
 
+      <ExportDialog
+        open={exportDialogOpen}
+        format={selectedExportFormat}
+        pageCount={orderedPages.length}
+        phase={exportPhase}
+        currentPage={exportCurrentPage}
+        totalPages={exportTotalPages}
+        progressMessage={exportProgress}
+        error={exportError}
+        cancelRequested={exportCancelRequested}
+        onOpenChange={handleExportDialogOpenChange}
+        onStart={() => void startExport()}
+        onCancel={cancelExport}
+      />
+
       <EditorToolbar
         activeTool={activeTool}
         selectedAnnotation={selectedAnnotation}
@@ -785,14 +871,14 @@ export function PdfEditor({
           setOrganizerOpen(true)
         }}
         onRemoveSelected={removeSelectedAnnotation}
-        onDownloadPdf={() => void downloadEditedPdf()}
-        onDownloadImages={(format) => void downloadEditedImages(format)}
+        onDownloadPdf={() => openExportDialog('pdf')}
+        onDownloadImages={(format) => openExportDialog(format)}
         isFullscreen={isFullscreen}
         isFullscreenSupported={isFullscreenSupported}
         onToggleFullscreen={() => void toggleFullscreen()}
       />
 
-      {exportError && (
+      {exportError && !exportDialogOpen && (
         <Alert
           variant="destructive"
           className="rounded-none border-x-0 border-t-0 px-4"

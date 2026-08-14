@@ -9,6 +9,10 @@ import type {
   SignaturePoint,
   TextAnnotation,
 } from './types'
+import {
+  ExportCancelledError,
+  throwIfExportAborted,
+} from './export-cancellation'
 import { getNaturalInkVariation } from './utils'
 
 const DEFAULT_EXPORT_SCALE = 2
@@ -413,6 +417,7 @@ export type PageCompositorOptions = {
   source: PdfSource
   pageReference: PdfPageReference
   annotations: Annotation[]
+  signal?: AbortSignal
 }
 
 export type CompositedPage = {
@@ -425,10 +430,13 @@ export async function renderEditedPage({
   source,
   pageReference,
   annotations,
+  signal,
 }: PageCompositorOptions): Promise<CompositedPage> {
+  throwIfExportAborted(signal)
   const sourcePage = await source.document.getPage(
     pageReference.sourcePageNumber,
   )
+  throwIfExportAborted(signal)
   const logicalViewport = sourcePage.getViewport({ scale: 1 })
   const exportScale = getExportScale(
     logicalViewport.width,
@@ -440,20 +448,35 @@ export async function renderEditedPage({
   canvas.height = Math.ceil(renderViewport.height)
   const context = getCanvasContext(canvas)
 
-  await sourcePage.render({ canvas, viewport: renderViewport }).promise
+  const renderTask = sourcePage.render({ canvas, viewport: renderViewport })
+  const cancelRender = () => renderTask.cancel()
+  signal?.addEventListener('abort', cancelRender, { once: true })
 
-  annotations
+  try {
+    if (signal?.aborted) renderTask.cancel()
+    await renderTask.promise
+    throwIfExportAborted(signal)
+  } catch (error) {
+    if (signal?.aborted) throw new ExportCancelledError()
+    throw error
+  } finally {
+    signal?.removeEventListener('abort', cancelRender)
+  }
+
+  const pageAnnotations = annotations
     .filter((annotation) => annotation.pageId === pageReference.id)
     .sort((first, second) => first.layer - second.layer)
-    .forEach((annotation) =>
-      drawAnnotation(
-        context,
-        annotation,
-        canvas.width,
-        canvas.height,
-        exportScale,
-      ),
+
+  for (const annotation of pageAnnotations) {
+    throwIfExportAborted(signal)
+    drawAnnotation(
+      context,
+      annotation,
+      canvas.width,
+      canvas.height,
+      exportScale,
     )
+  }
 
   return {
     canvas,

@@ -1,19 +1,19 @@
 import { Files, LockKeyhole } from 'lucide-react'
-
 import { Badge } from '@/components/ui/badge'
 import { GitHubButton } from '@/components/github-button'
+import logo from '@/assets/logo-mypdfly.webp'
 
 export function AppHeader() {
   return (
     <header className="border-b border-slate-200/80 bg-white/80 backdrop-blur-xl">
       <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         <div className="flex items-center gap-2.5">
-          <div className="grid size-9 place-items-center rounded-xl bg-[#ff5a45] text-white shadow-[0_8px_24px_rgba(255,90,69,0.28)]">
-            <Files className="size-[18px]" aria-hidden="true" />
-          </div>
-          <span className="text-lg font-semibold tracking-[-0.04em] text-slate-950">
-            my<span className="text-[#ff5a45]">pdf</span>ly
-          </span>
+          <img
+            src={logo}
+            alt="Mictlán Labs"
+            className="h-10 w-auto max-w-40 object-contain transition-transform duration-300 group-hover:scale-[1.03]"
+            onClick={() => window.open('https://mictlanlabs.com.mx', '_blank')}
+          />
         </div>
 
         <div className="flex items-center gap-2">

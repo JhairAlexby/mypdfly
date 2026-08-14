@@ -78,6 +78,7 @@ pnpm preview
 | `pnpm dev` | Inicia el servidor de desarrollo con HMR. |
 | `pnpm build` | Comprueba TypeScript y genera la versión de producción. |
 | `pnpm lint` | Ejecuta ESLint sobre el proyecto. |
+| `pnpm test` | Ejecuta las pruebas visuales y de orden de páginas del exportador PDF. |
 | `pnpm preview` | Sirve localmente la compilación de producción. |
 
 ## Privacidad

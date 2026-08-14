@@ -3,6 +3,7 @@ import type {
   PdfPageReference,
   PdfSource,
 } from './types'
+import { encodeCanvasToPng } from './image-encoders'
 import { renderEditedPage } from './page-compositor'
 
 type ExportPdfOptions = {
@@ -12,14 +13,6 @@ type ExportPdfOptions = {
   fileName: string
   onProgress?: (currentPage: number, totalPages: number) => void
 }
-
-const canvasToPng = (canvas: HTMLCanvasElement) =>
-  new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) resolve(blob)
-      else reject(new Error('No se pudo convertir la página a imagen.'))
-    }, 'image/png')
-  })
 
 const downloadBlob = (blob: Blob, fileName: string) => {
   const url = URL.createObjectURL(blob)
@@ -63,7 +56,7 @@ export async function exportEditedPdf({
       pageReference,
       annotations,
     })
-    const imageBlob = await canvasToPng(canvas)
+    const imageBlob = await encodeCanvasToPng(canvas)
     const imageBytes = await imageBlob.arrayBuffer()
     const image = await output.embedPng(imageBytes)
     const outputPage = output.addPage([logicalWidth, logicalHeight])

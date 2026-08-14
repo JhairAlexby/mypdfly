@@ -4,6 +4,8 @@ import {
   Download,
   Files,
   LoaderCircle,
+  Maximize2,
+  Minimize2,
   MousePointer2,
   Move,
   Shapes,
@@ -39,6 +41,9 @@ export type EditorToolbarProps = {
   onOpenOrganizer: () => void
   onRemoveSelected: () => void
   onDownload: () => void
+  isFullscreen: boolean
+  isFullscreenSupported: boolean
+  onToggleFullscreen: () => void
 }
 
 export function EditorToolbar({
@@ -53,6 +58,9 @@ export function EditorToolbar({
   onOpenOrganizer,
   onRemoveSelected,
   onDownload,
+  isFullscreen,
+  isFullscreenSupported,
+  onToggleFullscreen,
 }: EditorToolbarProps) {
   const shapeToolActive =
     activeTool !== null &&
@@ -165,6 +173,34 @@ export function EditorToolbar({
             <Download data-icon="inline-start" />
           )}
           {isExporting ? 'Preparando…' : 'Descargar'}
+        </Button>
+
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onToggleFullscreen}
+          disabled={!hasPages || !isFullscreenSupported}
+          aria-pressed={isFullscreen}
+          aria-label={
+            isFullscreen
+              ? 'Salir de pantalla completa'
+              : 'Ver PDF en pantalla completa'
+          }
+          title={
+            isFullscreen
+              ? 'Salir de pantalla completa'
+              : 'Ver PDF en pantalla completa'
+          }
+        >
+          {isFullscreen ? (
+            <Minimize2 data-icon="inline-start" />
+          ) : (
+            <Maximize2 data-icon="inline-start" />
+          )}
+          <span className="hidden sm:inline">
+            {isFullscreen ? 'Salir' : 'Pantalla completa'}
+          </span>
         </Button>
       </div>
 

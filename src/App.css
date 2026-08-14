@@ -41,6 +41,14 @@
   background: #eef0f5;
 }
 
+.pdf-editor:fullscreen,
+.pdf-editor--fullscreen {
+  width: 100vw;
+  height: 100svh;
+  min-height: 100svh;
+  background: #eef0f5;
+}
+
 .editor-toolbar {
   position: sticky;
   top: 0;
@@ -595,6 +603,13 @@
 
 .pdf-editor--context-format .editor-canvas-area {
   height: calc(100svh - 21.75rem);
+}
+
+.pdf-editor--fullscreen .editor-canvas-area,
+.pdf-editor--fullscreen.pdf-editor--context-format .editor-canvas-area {
+  min-height: 0;
+  height: auto;
+  flex: 1;
 }
 
 .editor-state {

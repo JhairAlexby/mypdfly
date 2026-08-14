@@ -92,6 +92,27 @@ export function PdfEditor({
   const [isExporting, setIsExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState('')
   const [exportError, setExportError] = useState('')
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [isFullscreenSupported, setIsFullscreenSupported] = useState(false)
+  const editorRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const editorElement = editorRef.current
+    if (!editorElement) return
+
+    const updateFullscreenState = () => {
+      setIsFullscreen(document.fullscreenElement === editorElement)
+    }
+
+    setIsFullscreenSupported(
+      Boolean(document.fullscreenEnabled && editorElement.requestFullscreen),
+    )
+    document.addEventListener('fullscreenchange', updateFullscreenState)
+
+    return () => {
+      document.removeEventListener('fullscreenchange', updateFullscreenState)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -637,9 +658,25 @@ export function PdfEditor({
     setTextDraft(null)
   }
 
+  const toggleFullscreen = async () => {
+    const editorElement = editorRef.current
+    if (!editorElement || !isFullscreenSupported) return
+
+    try {
+      if (document.fullscreenElement === editorElement) {
+        await document.exitFullscreen()
+      } else {
+        await editorElement.requestFullscreen()
+      }
+    } catch (error) {
+      console.error('No se pudo cambiar a pantalla completa.', error)
+    }
+  }
+
   return (
     <div
-      className={`pdf-editor ${showTextFormatter || showShapeFormatter || showBlurFormatter || showSignatureFormatter ? 'pdf-editor--context-format' : ''}`}
+      ref={editorRef}
+      className={`pdf-editor ${isFullscreen ? 'pdf-editor--fullscreen' : ''} ${showTextFormatter || showShapeFormatter || showBlurFormatter || showSignatureFormatter ? 'pdf-editor--context-format' : ''}`}
     >
       <PageOrganizerDialog
         open={organizerOpen}
@@ -709,6 +746,9 @@ export function PdfEditor({
         }}
         onRemoveSelected={removeSelectedAnnotation}
         onDownload={() => void downloadEditedPdf()}
+        isFullscreen={isFullscreen}
+        isFullscreenSupported={isFullscreenSupported}
+        onToggleFullscreen={() => void toggleFullscreen()}
       />
 
       {exportError && (

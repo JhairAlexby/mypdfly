@@ -14,6 +14,7 @@ import {
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { AppFooter } from '@/components/app-footer'
 import { AppHeader } from '@/components/app-header'
 import {
   Card,
@@ -303,6 +304,7 @@ function App() {
           </section>
         </main>
       )}
+      <AppFooter />
     </div>
   )
 }

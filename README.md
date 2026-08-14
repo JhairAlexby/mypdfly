@@ -1,75 +1,105 @@
-# React + TypeScript + Vite
+# mypdfly
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+<p align="center">
+  <img src="./public/logo-mypdfly.png" alt="Logo de mypdfly" width="420" />
+</p>
 
-Currently, two official plugins are available:
+<p align="center">
+  Editor PDF privado, rápido y completamente ejecutado en el navegador.
+</p>
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+<p align="center">
+  <a href="https://github.com/JhairAlexby/mypdfly/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="Licencia MIT" />
+  </a>
+  <a href="https://github.com/JhairAlexby/mypdfly">
+    <img src="https://img.shields.io/badge/GitHub-JhairAlexby%2Fmypdfly-181717?logo=github" alt="Repositorio en GitHub" />
+  </a>
+</p>
 
-## React Compiler
+## ¿Qué es mypdfly?
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+mypdfly es una aplicación web para visualizar, editar, combinar y descargar documentos PDF sin subirlos a un servidor. El procesamiento ocurre localmente en el navegador para que el usuario conserve el control de sus archivos.
 
-## Expanding the ESLint configuration
+## Funcionalidades
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- Subir y visualizar archivos PDF directamente en el navegador.
+- Agregar y editar texto con tamaño, color, tipografía, negrita, cursiva y subrayado.
+- Dibujar rectángulos, círculos, triángulos y líneas.
+- Ajustar color, opacidad, grosor y posición de las formas.
+- Difuminar secciones del documento y ajustar la intensidad del efecto.
+- Crear firmas dibujadas con mouse, touchpad, lápiz o pantalla táctil.
+- Combinar varios PDF y reorganizar sus páginas.
+- Descargar el documento editado.
+- Editar en pantalla completa.
+- Mantener el procesamiento de los documentos en el dispositivo del usuario.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Tecnologías
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+- React 19 y TypeScript.
+- Vite.
+- Tailwind CSS y componentes de [shadcn/ui](https://ui.shadcn.com/).
+- [PDF.js](https://mozilla.github.io/pdf.js/) para visualizar documentos.
+- [pdf-lib](https://pdf-lib.js.org/) para generar el PDF descargable.
+- pnpm como gestor de paquetes.
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Puesta en marcha
 
+### Requisitos
+
+- Node.js 20 o superior.
+- pnpm.
+
+### Instalación
+
+```bash
+pnpm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### Desarrollo
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+pnpm dev
 ```
+
+Después, abre la URL local que muestre Vite en la terminal.
+
+### Compilación y vista previa
+
+```bash
+pnpm build
+pnpm preview
+```
+
+### Scripts disponibles
+
+| Comando | Descripción |
+| --- | --- |
+| `pnpm dev` | Inicia el servidor de desarrollo con HMR. |
+| `pnpm build` | Comprueba TypeScript y genera la versión de producción. |
+| `pnpm lint` | Ejecuta ESLint sobre el proyecto. |
+| `pnpm preview` | Sirve localmente la compilación de producción. |
+
+## Privacidad
+
+mypdfly está diseñado con un enfoque local-first: los PDF seleccionados y sus ediciones permanecen en la sesión del navegador. No se necesita una cuenta ni un servicio de subida para utilizar el editor.
+
+## Contribuir
+
+Las mejoras, correcciones y nuevas ideas son bienvenidas. Puedes abrir un issue o enviar un pull request en el [repositorio de GitHub](https://github.com/JhairAlexby/mypdfly).
+
+## Licencia
+
+Este proyecto está disponible bajo la [Licencia MIT](./LICENSE). Puedes usarlo, copiarlo, modificarlo, distribuirlo y crear proyectos derivados, siempre que conserves el aviso de copyright y la licencia.
+
+## Hecho por
+
+<p align="center">
+  <a href="https://mictlanlabs.com.mx" target="_blank" rel="noreferrer">
+    <img src="./src/assets/LogoBlack.svg" alt="Mictlán Labs" width="240" />
+  </a>
+</p>
+
+<p align="center">
+  Creado por <a href="https://github.com/JhairAlexby">JhairAlexby</a> · <a href="https://mictlanlabs.com.mx">MictlánLabs</a>
+</p>

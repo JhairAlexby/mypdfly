@@ -2,7 +2,9 @@ import {
   Blend,
   ChevronDown,
   Download,
+  FileText,
   Files,
+  Image,
   LoaderCircle,
   Maximize2,
   Minimize2,
@@ -27,6 +29,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 
 import { shapeOptions, toolLabels } from './constants'
+import type { ImageFormat } from './image-encoders'
 import type { Annotation, EditorTool, ShapeTool } from './types'
 
 export type EditorToolbarProps = {
@@ -40,7 +43,8 @@ export type EditorToolbarProps = {
   onOpenSignature: () => void
   onOpenOrganizer: () => void
   onRemoveSelected: () => void
-  onDownload: () => void
+  onDownloadPdf: () => void
+  onDownloadImages: (format: ImageFormat) => void
   isFullscreen: boolean
   isFullscreenSupported: boolean
   onToggleFullscreen: () => void
@@ -57,7 +61,8 @@ export function EditorToolbar({
   onOpenSignature,
   onOpenOrganizer,
   onRemoveSelected,
-  onDownload,
+  onDownloadPdf,
+  onDownloadImages,
   isFullscreen,
   isFullscreenSupported,
   onToggleFullscreen,
@@ -160,20 +165,64 @@ export function EditorToolbar({
 
         <Separator orientation="vertical" className="mx-1 h-6" />
 
-        <Button
-          type="button"
-          size="sm"
-          onClick={onDownload}
-          disabled={!hasPages || isExporting}
-          aria-busy={isExporting}
-        >
-          {isExporting ? (
-            <LoaderCircle className="animate-spin" data-icon="inline-start" />
-          ) : (
-            <Download data-icon="inline-start" />
-          )}
-          {isExporting ? 'Preparando…' : 'Descargar'}
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              size="sm"
+              disabled={!hasPages || isExporting}
+              aria-busy={isExporting}
+            >
+              {isExporting ? (
+                <LoaderCircle
+                  className="animate-spin"
+                  data-icon="inline-start"
+                />
+              ) : (
+                <Download data-icon="inline-start" />
+              )}
+              {isExporting ? 'Preparando…' : 'Descargar'}
+              {!isExporting && <ChevronDown data-icon="inline-end" />}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-64 p-1.5">
+            <DropdownMenuLabel>Formato de descarga</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={onDownloadPdf} className="gap-2">
+              <FileText />
+              <span>
+                <span className="block">PDF</span>
+                <span className="block text-xs text-muted-foreground">
+                  Documento PDF
+                </span>
+              </span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => onDownloadImages('png')}
+              className="gap-2"
+            >
+              <Image />
+              <span>
+                <span className="block">PNG</span>
+                <span className="block text-xs text-muted-foreground">
+                  Directo o ZIP multipágina
+                </span>
+              </span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => onDownloadImages('jpeg')}
+              className="gap-2"
+            >
+              <Image />
+              <span>
+                <span className="block">JPEG</span>
+                <span className="block text-xs text-muted-foreground">
+                  Directo o ZIP multipágina
+                </span>
+              </span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         <Button
           type="button"

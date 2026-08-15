@@ -5,6 +5,7 @@ import {
   FileText,
   GripVertical,
   LoaderCircle,
+  Trash2,
   UploadCloud,
 } from 'lucide-react'
 
@@ -36,6 +37,7 @@ export type PageOrganizerDialogProps = {
   onOpenChange: (open: boolean) => void
   onAddFiles: (files: File[]) => void | Promise<void>
   onMovePage: (pageId: string, position: number) => void
+  onRequestRemovePage: (pageId: string) => void
   onSelectPage: (pageId: string) => void
   onTargetPositionChange: (value: string) => void
 }
@@ -52,6 +54,7 @@ export function PageOrganizerDialog({
   onOpenChange,
   onAddFiles,
   onMovePage,
+  onRequestRemovePage,
   onSelectPage,
   onTargetPositionChange,
 }: PageOrganizerDialogProps) {
@@ -192,26 +195,47 @@ export function PageOrganizerDialog({
                 >
                   <div className="page-organizer-card-header">
                     <Badge className="page-position-badge">{index + 1}</Badge>
-                    <button
-                      type="button"
-                      className="page-drag-handle"
-                      draggable
-                      onDragStart={(event) => {
-                        event.dataTransfer.effectAllowed = 'move'
-                        event.dataTransfer.setData('text/plain', page.id)
-                        setDraggedPageId(page.id)
-                        onSelectPage(page.id)
-                      }}
-                      onClick={() => onSelectPage(page.id)}
-                      onDragEnd={() => {
-                        setDraggedPageId(null)
-                        setDropTargetPageId(null)
-                      }}
-                      aria-label={`Seleccionar página ${index + 1} para moverla`}
-                      title="Arrastra o selecciona y usa los controles inferiores"
-                    >
-                      <GripVertical aria-hidden="true" />
-                    </button>
+                    <div className="page-organizer-card-tools">
+                      <button
+                        type="button"
+                        className="page-drag-handle"
+                        draggable
+                        onDragStart={(event) => {
+                          event.dataTransfer.effectAllowed = 'move'
+                          event.dataTransfer.setData('text/plain', page.id)
+                          setDraggedPageId(page.id)
+                          onSelectPage(page.id)
+                        }}
+                        onClick={() => onSelectPage(page.id)}
+                        onDragEnd={() => {
+                          setDraggedPageId(null)
+                          setDropTargetPageId(null)
+                        }}
+                        aria-label={`Seleccionar página ${index + 1} para moverla`}
+                        title="Arrastra o selecciona y usa los controles inferiores"
+                      >
+                        <GripVertical aria-hidden="true" />
+                      </button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        className="page-delete-button"
+                        disabled={pages.length <= 1 || isAddingPdfs}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onRequestRemovePage(page.id)
+                        }}
+                        aria-label={`Eliminar página ${index + 1}`}
+                        title={
+                          pages.length <= 1
+                            ? 'Debe quedar al menos una página'
+                            : 'Eliminar página'
+                        }
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </Button>
+                    </div>
                   </div>
 
                   <button

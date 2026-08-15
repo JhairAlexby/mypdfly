@@ -232,6 +232,7 @@ export type PdfPageProps = {
   pageId: string
   displayPageNumber: number
   sourceName: string
+  canRemovePage: boolean
   activeTool: EditorTool
   textFormat: TextFormat
   shapeFormat: ShapeFormat
@@ -254,6 +255,7 @@ export type PdfPageProps = {
   ) => void
   onUpdateAnnotation: (annotation: Annotation) => void
   onSelectAnnotation: (id: string | null) => void
+  onRequestRemovePage: (pageId: string) => void
 }
 
 export type PdfPageThumbnailProps = {

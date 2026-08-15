@@ -11,9 +11,7 @@ export function AppHeader() {
           <img
             src={logo}
             alt="Mictlán Labs"
-            className="h-10 w-auto max-w-40 object-contain transition-transform duration-300 group-hover:scale-[1.03]"
-            onClick={() => window.open('https://mictlanlabs.com.mx', '_blank')}
-          />
+            className="h-10 w-auto max-w-40 object-contain transition-transform duration-300 group-hover:scale-[1.03]"          />
         </div>
 
         <div className="flex items-center gap-2">

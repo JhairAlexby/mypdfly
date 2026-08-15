@@ -719,6 +719,36 @@ test('exporta las páginas en el orden recibido', async () => {
   }
 })
 
+test('exporta únicamente las páginas que permanecen en el manifiesto', async () => {
+  const { loadingTask, source } = await createFixture()
+  const remainingPages = [getPageReference(1), getPageReference(3)]
+
+  try {
+    lastDownloadUrl = null
+    await exportEditedPdf({
+      annotations: [],
+      fileName: 'fixture-sin-pagina-2.pdf',
+      pages: remainingPages,
+      sources: [source],
+    })
+
+    assert.ok(lastDownloadUrl)
+    const response = await fetch(lastDownloadUrl)
+    const exportedPdf = await PDFDocument.load(await response.arrayBuffer())
+    const sizes = exportedPdf.getPages().map((page) => {
+      const size = page.getSize()
+      return [Math.round(size.width), Math.round(size.height)]
+    })
+
+    assert.deepEqual(sizes, [
+      [180, 120],
+      [160, 220],
+    ])
+  } finally {
+    await loadingTask.destroy()
+  }
+})
+
 test('descarga directamente la imagen cuando solo hay una página', async () => {
   const { loadingTask, source } = await createFixture()
 

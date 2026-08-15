@@ -3,9 +3,11 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
 } from 'react'
+import { Trash2 } from 'lucide-react'
 import type { PDFPageProxy, RenderTask } from 'pdfjs-dist'
 
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
 import { BlurMark, ShapeMark, SignatureMark } from './annotation-marks'
@@ -36,6 +38,7 @@ export function PdfPage({
   pageId,
   displayPageNumber,
   sourceName,
+  canRemovePage,
   activeTool,
   textFormat,
   shapeFormat,
@@ -52,6 +55,7 @@ export function PdfPage({
   onAddSignature,
   onUpdateAnnotation,
   onSelectAnnotation,
+  onRequestRemovePage,
 }: PdfPageProps) {
   const pageRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -368,6 +372,24 @@ export function PdfPage({
       className="editor-page-wrap"
       aria-label={`Página ${displayPageNumber} de ${sourceName}`}
     >
+      <div className="editor-page-actions">
+        <Button
+          type="button"
+          variant="destructive"
+          size="icon-sm"
+          className="editor-page-delete"
+          disabled={!canRemovePage}
+          onClick={() => onRequestRemovePage(pageId)}
+          aria-label={`Eliminar página ${displayPageNumber}`}
+          title={
+            canRemovePage
+              ? 'Eliminar página'
+              : 'Debe quedar al menos una página'
+          }
+        >
+          <Trash2 aria-hidden="true" />
+        </Button>
+      </div>
       <div
         ref={pageRef}
         className={pageClassName}

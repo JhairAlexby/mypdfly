@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, FileText, LoaderCircle } from 'lucide-react'
 import {
   GlobalWorkerOptions,
@@ -44,6 +44,11 @@ import {
   TextFormatToolbar,
 } from './pdf-editor/format-toolbars'
 import { PageOrganizerDialog } from './pdf-editor/page-organizer-dialog'
+import { removePage as removePageFromManifest } from './pdf-editor/page-operations'
+import {
+  PageDeleteDialog,
+  type PageDeleteTarget,
+} from './pdf-editor/page-delete-dialog'
 import { PdfPage } from './pdf-editor/pdf-page'
 import { SignaturePad } from './pdf-editor/signature-pad'
 import type {
@@ -84,6 +89,8 @@ export function PdfEditor({
   const [organizerOpen, setOrganizerOpen] = useState(false)
   const [isAddingPdfs, setIsAddingPdfs] = useState(false)
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null)
+  const [pageToDelete, setPageToDelete] =
+    useState<PageDeleteTarget | null>(null)
   const [targetPosition, setTargetPosition] = useState('1')
   const [organizerAnnouncement, setOrganizerAnnouncement] = useState('')
   const [activeTool, setActiveTool] = useState<EditorTool>(null)
@@ -178,6 +185,15 @@ export function PdfEditor({
     }
   }, [initialFile])
 
+  const activeSourceIds = useMemo(
+    () => new Set(orderedPages.map((page) => page.sourceId)),
+    [orderedPages],
+  )
+  const activePdfSources = useMemo(
+    () => pdfSources.filter((source) => activeSourceIds.has(source.id)),
+    [activeSourceIds, pdfSources],
+  )
+
   useEffect(() => {
     isMountedRef.current = true
     const loadingTasks = additionalLoadingTasksRef.current
@@ -192,17 +208,17 @@ export function PdfEditor({
   }, [])
 
   useEffect(() => {
-    if (!pdfSources.length) return
+    if (!activePdfSources.length) return
 
     onSummaryChange?.({
-      fileCount: pdfSources.length,
+      fileCount: activePdfSources.length,
       pageCount: orderedPages.length,
-      totalSize: pdfSources.reduce(
+      totalSize: activePdfSources.reduce(
         (total, source) => total + source.file.size,
         0,
       ),
     })
-  }, [onSummaryChange, orderedPages.length, pdfSources])
+  }, [activePdfSources, onSummaryChange, orderedPages.length])
 
   const sourcesById = new Map(
     pdfSources.map((source) => [source.id, source]),
@@ -331,6 +347,52 @@ export function PdfEditor({
     setOrganizerAnnouncement(
       `${source?.file.name ?? 'Página'}, página original ${page.sourcePageNumber}, movida a la posición ${finalPosition}.`,
     )
+  }
+
+  const removePage = (pageId: string) => {
+    const result = removePageFromManifest({
+      annotations,
+      pageId,
+      pages: orderedPages,
+      selectedAnnotationId,
+      selectedPageId,
+      textDraft,
+    })
+
+    if (result.status !== 'removed') return
+
+    setOrderedPages(result.pages)
+    setAnnotations(result.annotations)
+    setSelectedPageId(result.selectedPageId)
+    setSelectedAnnotationId(result.selectedAnnotationId)
+    setTextDraft(result.textDraft)
+    if (textDraft?.pageId === pageId) setActiveTool(null)
+
+    const removedSource = sourcesById.get(result.removedPage.sourceId)
+    const nextPageIndex = result.selectedPageId
+      ? result.pages.findIndex((page) => page.id === result.selectedPageId)
+      : -1
+    setTargetPosition(String(Math.max(1, nextPageIndex + 1)))
+    setOrganizerError('')
+    setOrganizerAnnouncement(
+      `Página original ${result.removedPage.sourcePageNumber} de ${removedSource?.file.name ?? 'el documento'} eliminada. Quedan ${result.pages.length} ${result.pages.length === 1 ? 'página' : 'páginas'}.`,
+    )
+  }
+
+  const requestPageRemoval = (pageId: string) => {
+    if (orderedPages.length <= 1 || isAddingPdfs || isExporting) return
+
+    const pageIndex = orderedPages.findIndex((page) => page.id === pageId)
+    const page = orderedPages[pageIndex]
+    if (!page) return
+
+    const source = sourcesById.get(page.sourceId)
+    setPageToDelete({
+      id: page.id,
+      displayNumber: pageIndex + 1,
+      sourceName: source?.file.name ?? 'el documento',
+      sourcePageNumber: page.sourcePageNumber,
+    })
   }
 
   const selectedAnnotation =
@@ -697,12 +759,12 @@ export function PdfEditor({
 
       if (format === 'pdf') {
         await exportEditedPdf({
-          sources: pdfSources,
+          sources: activePdfSources,
           pages: orderedPages,
           annotations: getAnnotationsForExport(),
           fileName: getEditedPdfFileName(
             initialFile.name,
-            pdfSources.length > 1,
+            activePdfSources.length > 1,
           ),
           onProgress,
           signal: controller.signal,
@@ -710,13 +772,13 @@ export function PdfEditor({
       } else {
         await exportEditedImages({
           annotations: getAnnotationsForExport(),
-          combined: pdfSources.length > 1,
+          combined: activePdfSources.length > 1,
           fileName: initialFile.name,
           format,
           onProgress,
           pages: orderedPages,
           signal: controller.signal,
-          sources: pdfSources,
+          sources: activePdfSources,
         })
       }
 
@@ -791,7 +853,7 @@ export function PdfEditor({
     >
       <PageOrganizerDialog
         open={organizerOpen}
-        sources={pdfSources}
+        sources={activePdfSources}
         pages={orderedPages}
         isAddingPdfs={isAddingPdfs}
         error={organizerError}
@@ -801,8 +863,16 @@ export function PdfEditor({
         onOpenChange={handleOrganizerOpenChange}
         onAddFiles={addPdfFiles}
         onMovePage={movePage}
+        onRequestRemovePage={requestPageRemoval}
         onSelectPage={selectOrganizerPage}
         onTargetPositionChange={setTargetPosition}
+      />
+      <PageDeleteDialog
+        target={pageToDelete}
+        onOpenChange={(open) => {
+          if (!open) setPageToDelete(null)
+        }}
+        onConfirm={removePage}
       />
 
       <Dialog open={signatureDialogOpen} onOpenChange={setSignatureDialogOpen}>
@@ -949,6 +1019,7 @@ export function PdfEditor({
                   pageId={page.id}
                   displayPageNumber={index + 1}
                   sourceName={source.file.name}
+                  canRemovePage={orderedPages.length > 1 && !isExporting}
                   activeTool={activeTool}
                   textFormat={activeTextFormat}
                   shapeFormat={activeShapeFormat}
@@ -969,6 +1040,7 @@ export function PdfEditor({
                   }
                   onUpdateAnnotation={updateAnnotation}
                   onSelectAnnotation={selectAnnotation}
+                  onRequestRemovePage={requestPageRemoval}
                 />
               )
             })}
@@ -978,8 +1050,8 @@ export function PdfEditor({
 
       <div className="editor-statusbar">
         <span>
-          {pdfSources.length
-            ? `${orderedPages.length} ${orderedPages.length === 1 ? 'página' : 'páginas'} · ${pdfSources.length} ${pdfSources.length === 1 ? 'PDF' : 'PDFs'}`
+          {activePdfSources.length
+            ? `${orderedPages.length} ${orderedPages.length === 1 ? 'página' : 'páginas'} · ${activePdfSources.length} ${activePdfSources.length === 1 ? 'PDF' : 'PDFs'}`
             : 'Cargando PDF'}
         </span>
         <span>

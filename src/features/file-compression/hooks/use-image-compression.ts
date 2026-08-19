@@ -7,9 +7,11 @@ import {
 } from '@/features/file-compression/core'
 import {
   DEFAULT_JPEG_COMPRESSION_QUALITY,
-  inspectJpegFile,
+  DEFAULT_PNG_OPTIMIZATION_LEVEL,
+  inspectBrowserImageFile,
   JPEG_COMPRESSION_PROCESSOR_ID,
-  registerJpegCompressionProcessor,
+  PNG_COMPRESSION_PROCESSOR_ID,
+  registerImageCompressionProcessors,
 } from '@/features/file-compression/processors'
 import {
   isOperationCancelledError,
@@ -18,19 +20,27 @@ import {
 } from '@/lib/files'
 import { useCompressionJobState } from './use-compression-job-state'
 
-export type JpegSelectionState =
+export type SupportedImageCompressionFormat = 'jpeg' | 'png'
+
+export type ImageSelectionState =
   | { readonly status: 'empty' }
   | { readonly status: 'inspecting'; readonly file: File }
   | {
       readonly status: 'ready'
       readonly file: File
+      readonly format: SupportedImageCompressionFormat
       readonly height: number
       readonly previewUrl: string
       readonly width: number
     }
   | { readonly status: 'error'; readonly message: string }
 
-registerJpegCompressionProcessor()
+export type ReadyImageSelection = Extract<
+  ImageSelectionState,
+  { readonly status: 'ready' }
+>
+
+registerImageCompressionProcessors()
 
 const getSelectionErrorMessage = (error: unknown) => {
   if (error instanceof CompressionCoreError) return error.message
@@ -39,13 +49,16 @@ const getSelectionErrorMessage = (error: unknown) => {
   return 'No se pudo inspeccionar la imagen seleccionada.'
 }
 
-export const useJpegCompression = () => {
+export const useImageCompression = () => {
   const [job] = useState(() => new CompressionJob())
   const jobState = useCompressionJobState(job)
-  const [quality, setQuality] = useState(
+  const [jpegQuality, setJpegQuality] = useState(
     Math.round(DEFAULT_JPEG_COMPRESSION_QUALITY * 100),
   )
-  const [selection, setSelection] = useState<JpegSelectionState>({
+  const [pngLevel, setPngLevel] = useState(
+    DEFAULT_PNG_OPTIMIZATION_LEVEL,
+  )
+  const [selection, setSelection] = useState<ImageSelectionState>({
     status: 'empty',
   })
   const inspectionControllerRef = useRef<AbortController | null>(null)
@@ -80,14 +93,19 @@ export const useJpegCompression = () => {
         )
         throwIfAborted(controller.signal)
 
-        if (validatedFile.format.id !== 'jpeg') {
+        const format = validatedFile.format.id
+
+        if (format !== 'jpeg' && format !== 'png') {
           throw new CompressionCoreError(
             'unsupported-format',
-            'En este paso solo puedes comprimir archivos JPEG.',
+            'Solo puedes comprimir imágenes JPEG o PNG.',
           )
         }
 
-        const inspection = await inspectJpegFile(file, controller.signal)
+        const inspection = await inspectBrowserImageFile(
+          file,
+          controller.signal,
+        )
         throwIfAborted(controller.signal)
         const previewUrl = URL.createObjectURL(file)
 
@@ -102,6 +120,7 @@ export const useJpegCompression = () => {
         previewUrlRef.current = previewUrl
         setSelection({
           file,
+          format,
           height: inspection.height,
           previewUrl,
           status: 'ready',
@@ -142,12 +161,18 @@ export const useJpegCompression = () => {
   const compress = useCallback(async () => {
     if (selection.status !== 'ready' || job.isActive) return
 
+    const isPng = selection.format === 'png'
+
     await job.start({
       file: selection.file,
-      options: { quality: quality / 100 },
-      processorId: JPEG_COMPRESSION_PROCESSOR_ID,
+      options: isPng
+        ? { level: pngLevel }
+        : { quality: jpegQuality / 100 },
+      processorId: isPng
+        ? PNG_COMPRESSION_PROCESSOR_ID
+        : JPEG_COMPRESSION_PROCESSOR_ID,
     })
-  }, [job, quality, selection])
+  }, [job, jpegQuality, pngLevel, selection])
 
   const resetResult = useCallback(() => {
     if (job.isActive || job.state.status === 'idle') return
@@ -169,10 +194,12 @@ export const useJpegCompression = () => {
     clearSelection,
     compress,
     jobState,
-    quality,
+    jpegQuality,
+    pngLevel,
     resetResult,
     selection,
     selectFile,
-    setQuality,
+    setJpegQuality,
+    setPngLevel,
   }
 }

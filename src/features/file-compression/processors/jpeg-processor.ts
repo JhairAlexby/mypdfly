@@ -7,45 +7,29 @@ import {
   getSafeFileBaseName,
   throwIfAborted,
 } from '@/lib/files'
+import {
+  assertValidImageDimensions,
+  decodeBrowserImage,
+  inspectBrowserImageFile,
+  type BrowserImageDecoder,
+  type BrowserImageInspection,
+  type DecodedBrowserImage,
+} from './browser-image'
 
 export const JPEG_COMPRESSION_PROCESSOR_ID = 'jpeg-browser'
 export const DEFAULT_JPEG_COMPRESSION_QUALITY = 0.8
 export const MINIMUM_JPEG_COMPRESSION_QUALITY = 0.1
 
-export type JpegInspection = {
-  readonly height: number
-  readonly width: number
-}
-
-export type DecodedJpegImage = JpegInspection & {
-  readonly source: CanvasImageSource
-  readonly close: () => void
-}
+export type JpegInspection = BrowserImageInspection
+export type DecodedJpegImage = DecodedBrowserImage
 
 export type JpegProcessorDependencies = {
   readonly createCanvas: (
     width: number,
     height: number,
   ) => HTMLCanvasElement
-  readonly decodeImage: (file: File) => Promise<DecodedJpegImage>
+  readonly decodeImage: BrowserImageDecoder
   readonly encode: typeof encodeCanvasToJpeg
-}
-
-const decodeImageInBrowser = async (file: File): Promise<DecodedJpegImage> => {
-  if (typeof createImageBitmap !== 'function') {
-    throw new Error('Este navegador no permite decodificar imágenes JPEG.')
-  }
-
-  const bitmap = await createImageBitmap(file, {
-    imageOrientation: 'from-image',
-  })
-
-  return {
-    close: () => bitmap.close(),
-    height: bitmap.height,
-    source: bitmap,
-    width: bitmap.width,
-  }
 }
 
 const createCanvasInBrowser = (width: number, height: number) => {
@@ -61,7 +45,7 @@ const createCanvasInBrowser = (width: number, height: number) => {
 
 const browserDependencies: JpegProcessorDependencies = {
   createCanvas: createCanvasInBrowser,
-  decodeImage: decodeImageInBrowser,
+  decodeImage: decodeBrowserImage,
   encode: encodeCanvasToJpeg,
 }
 
@@ -81,44 +65,7 @@ const normalizeQuality = (options: CompressionOptions) => {
   )
 }
 
-const assertValidDimensions = ({ height, width }: JpegInspection) => {
-  if (
-    !Number.isInteger(width) ||
-    !Number.isInteger(height) ||
-    width <= 0 ||
-    height <= 0
-  ) {
-    throw new Error('La imagen JPEG no tiene dimensiones válidas.')
-  }
-}
-
-export const inspectJpegFile = async (
-  file: File,
-  signal?: AbortSignal,
-  dependencies: Pick<JpegProcessorDependencies, 'decodeImage'> = browserDependencies,
-): Promise<JpegInspection> => {
-  throwIfAborted(signal)
-  let decodedImage: DecodedJpegImage | undefined
-
-  try {
-    decodedImage = await dependencies.decodeImage(file)
-    throwIfAborted(signal)
-    assertValidDimensions(decodedImage)
-
-    return {
-      height: decodedImage.height,
-      width: decodedImage.width,
-    }
-  } catch (error) {
-    throwIfAborted(signal)
-    throw new Error(
-      'No se pudo leer la imagen JPEG. Verifica que el archivo no esté dañado.',
-      { cause: error },
-    )
-  } finally {
-    decodedImage?.close()
-  }
-}
+export const inspectJpegFile = inspectBrowserImageFile
 
 export const createJpegCompressionProcessor = (
   dependencies: JpegProcessorDependencies = browserDependencies,
@@ -142,7 +89,7 @@ export const createJpegCompressionProcessor = (
     try {
       decodedImage = await dependencies.decodeImage(input.file)
       throwIfAborted(context.signal)
-      assertValidDimensions(decodedImage)
+      assertValidImageDimensions(decodedImage)
 
       context.reportProgress({
         completed: 1,

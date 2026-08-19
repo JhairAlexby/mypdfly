@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "tsx --test tests/pdf-export.test.ts tests/image-encoders.test.ts tests/page-operations.test.ts",
+    "test": "tsx --test tests/pdf-export.test.ts tests/image-encoders.test.ts tests/page-operations.test.ts tests/file-compression-core.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

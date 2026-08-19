@@ -1,20 +1,10 @@
-export const downloadBlob = (blob: Blob, fileName: string) => {
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = fileName
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
+import { downloadBlob } from '@/lib/files/download'
+import { sanitizeFileNamePart } from '@/lib/files/file-names'
+
+export { downloadBlob }
 
 export const getSafeDocumentBaseName = (fileName: string) => {
-  const baseName = fileName
-    .replace(/\.pdf$/i, '')
-    .replace(/[\\/:*?"<>|]+/g, '-')
-    .replace(/\s+/g, ' ')
-    .trim()
+  const baseName = sanitizeFileNamePart(fileName.replace(/\.pdf$/i, ''))
 
   return baseName || 'documento'
 }

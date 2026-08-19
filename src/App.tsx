@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { AppFooter } from '@/components/app-footer'
 import { AppHeader } from '@/components/app-header'
 import { NotFound } from '@/components/not-found'
+import { formatFileSize } from '@/lib/files'
 import {
   Card,
   CardContent,
@@ -40,16 +41,6 @@ const FileCompressionPage = lazy(() =>
     default: module.FileCompressionPage,
   })),
 )
-
-const formatFileSize = (bytes: number) => {
-  if (bytes < 1024 * 1024) {
-    return `${Math.max(1, Math.round(bytes / 1024))} KB`
-  }
-
-  return `${new Intl.NumberFormat('es-MX', {
-    maximumFractionDigits: 1,
-  }).format(bytes / (1024 * 1024))} MB`
-}
 
 const normalizePath = (path: string) => path.replace(/\/+$/, '') || '/'
 

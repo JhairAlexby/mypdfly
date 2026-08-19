@@ -12,6 +12,7 @@ export {
   removeFileExtension,
   sanitizeFileNamePart,
 } from './file-names'
+export { formatFileSize } from './format-file-size'
 export {
   createImageEncoder,
   DEFAULT_JPEG_QUALITY,

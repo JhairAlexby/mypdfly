@@ -124,9 +124,9 @@ export class CompressionJob {
     return this.#abortController !== null
   }
 
-  subscribe(listener: CompressionJobListener) {
+  subscribe(listener: CompressionJobListener, emitCurrentState = true) {
     this.#listeners.add(listener)
-    listener(this.#state)
+    if (emitCurrentState) listener(this.#state)
 
     return () => this.#listeners.delete(listener)
   }

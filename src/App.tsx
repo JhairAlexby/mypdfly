@@ -261,7 +261,10 @@ function PdfWorkspaceApp() {
                     <span className="block truncate text-sm font-medium text-slate-700">
                       Comprimir archivos
                     </span>
-                    <span className="mt-0.5 block text-xs font-normal text-slate-400">
+                    <span className="mt-0.5 block text-xs font-normal text-slate-500">
+                      PDF · JPG · PNG · WebP · AVIF
+                    </span>
+                    <span className="mt-0.5 block text-[11px] font-medium text-[#e84c38]">
                       Abrir herramienta
                     </span>
                   </span>

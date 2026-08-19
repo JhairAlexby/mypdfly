@@ -1,4 +1,5 @@
 import { getFileExtension } from '@/lib/files/file-names'
+import { formatFileSize } from '@/lib/files/format-file-size'
 import { CompressionCoreError } from './errors'
 import {
   DEFAULT_COMPRESSION_FORMATS,
@@ -19,6 +20,20 @@ const GENERIC_MIME_TYPES = new Set([
 
 const normalizeMimeType = (mimeType: string) =>
   mimeType.split(';', 1)[0].trim().toLowerCase()
+
+export const assertCompressionFileWithinSizeLimit = (
+  file: File,
+  format: CompressionFormatDefinition,
+) => {
+  const maximumSize = format.maximumFileSizeBytes
+
+  if (maximumSize !== undefined && file.size > maximumSize) {
+    throw new CompressionCoreError(
+      'file-too-large',
+      `El archivo ${format.label} supera el límite seguro de ${formatFileSize(maximumSize)} para procesarlo en el navegador.`,
+    )
+  }
+}
 
 export async function validateCompressionFile(
   file: File,
@@ -45,6 +60,8 @@ export async function validateCompressionFile(
       'La firma del archivo no corresponde a un formato compatible.',
     )
   }
+
+  assertCompressionFileWithinSizeLimit(file, detectedFormat)
 
   const declaredMimeType = normalizeMimeType(file.type)
   const extension = getFileExtension(file.name)

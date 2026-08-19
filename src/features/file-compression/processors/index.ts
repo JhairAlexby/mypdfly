@@ -140,10 +140,14 @@ export {
   PDF_COMPRESSION_PROCESSOR_ID,
 } from './pdf-processor'
 export type {
-  LoadedPdfForCompression,
   PdfDocumentInspection,
   PdfProcessorDependencies,
 } from './pdf-processor'
+export type {
+  PdfCodec,
+  PdfCodecOptions,
+  PdfCodecResult,
+} from './pdf-codec'
 export { optimizePngInWorker } from './png-optimizer'
 export type { PngOptimiseOptions, PngOptimizer } from './png-optimizer'
 export {

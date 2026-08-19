@@ -44,6 +44,21 @@ test('sanea rutas y conserva extensiones al deduplicar', () => {
   )
 })
 
+test('evita colisiones con un nombre sufijado que ya existe', () => {
+  assert.deepEqual(
+    getUniqueArchiveFileNames([
+      'resultado.pdf',
+      'resultado (2).pdf',
+      'resultado.pdf',
+    ]),
+    [
+      'resultado.pdf',
+      'resultado (2).pdf',
+      'resultado (3).pdf',
+    ],
+  )
+})
+
 test('cancela la creación del ZIP entre archivos', async () => {
   const controller = new AbortController()
   const archive = createZipArchive(

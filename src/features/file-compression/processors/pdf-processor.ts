@@ -1,82 +1,44 @@
 import {
-  PDFDict,
-  PDFDocument,
-  PDFName,
-  type SaveOptions,
-} from 'pdf-lib'
-
-import {
+  assertCompressionFileWithinSizeLimit,
   CompressionCoreError,
+  findFormatById,
   type CompressionProcessor,
 } from '@/features/file-compression/core'
 import { getSafeFileBaseName, throwIfAborted } from '@/lib/files'
+import {
+  processPdfInWorker,
+  type PdfCodec,
+  type PdfCodecResult,
+} from './pdf-codec'
 
 export const PDF_COMPRESSION_PROCESSOR_ID = 'pdf-structural'
 
 const PDF_SIGNATURE = [0x25, 0x50, 0x44, 0x46, 0x2d] as const
 
-const PDF_SAVE_OPTIONS = {
-  addDefaultPage: false,
-  objectsPerTick: 100,
-  updateFieldAppearances: false,
-  useObjectStreams: true,
-} as const satisfies SaveOptions
-
-export type PdfDocumentInspection = {
-  readonly hasDigitalSignature: boolean
-  readonly pageCount: number
-}
-
-export type LoadedPdfForCompression = PdfDocumentInspection & {
-  readonly save: () => Promise<Uint8Array>
-}
+export type PdfDocumentInspection = Pick<
+  PdfCodecResult,
+  'hasDigitalSignature' | 'pageCount'
+>
 
 export type PdfProcessorDependencies = {
-  readonly load: (input: Uint8Array) => Promise<LoadedPdfForCompression>
-}
-
-const hasDigitalSignature = (document: PDFDocument) => {
-  const signatureFieldType = PDFName.of('Sig')
-  const fieldTypeKey = PDFName.of('FT')
-  const byteRangeKey = PDFName.of('ByteRange')
-  const acroForm = document.catalog.getAcroForm()
-
-  const hasSignatureField =
-    acroForm?.getAllFields().some(([field]) =>
-      field.getInheritableAttribute(fieldTypeKey) === signatureFieldType,
-    ) ?? false
-  const hasSignedDictionary = document.context
-    .enumerateIndirectObjects()
-    .some(([, object]) =>
-      object instanceof PDFDict && object.has(byteRangeKey),
-    )
-
-  return hasSignatureField || hasSignedDictionary
-}
-
-const loadPdfForCompression = async (
-  input: Uint8Array,
-): Promise<LoadedPdfForCompression> => {
-  let document: PDFDocument
-
-  try {
-    document = await PDFDocument.load(input, { updateMetadata: false })
-  } catch {
-    throw new CompressionCoreError(
-      'invalid-pdf',
-      'No se pudo abrir el PDF. Puede estar cifrado, protegido o dañado.',
-    )
-  }
-
-  return {
-    hasDigitalSignature: hasDigitalSignature(document),
-    pageCount: document.getPageCount(),
-    save: () => document.save(PDF_SAVE_OPTIONS),
-  }
+  readonly process: PdfCodec
 }
 
 const browserDependencies: PdfProcessorDependencies = {
-  load: loadPdfForCompression,
+  process: processPdfInWorker,
+}
+
+const assertPdfFileWithinSizeLimit = (file: File) => {
+  const format = findFormatById('pdf')
+
+  if (!format) {
+    throw new CompressionCoreError(
+      'unsupported-format',
+      'No se encontró la definición del formato PDF.',
+    )
+  }
+
+  assertCompressionFileWithinSizeLimit(file, format)
 }
 
 const assertPdfCanBeRewritten = (
@@ -102,14 +64,15 @@ export const inspectPdfFile = async (
   signal?: AbortSignal,
   dependencies: PdfProcessorDependencies = browserDependencies,
 ): Promise<PdfDocumentInspection> => {
+  assertPdfFileWithinSizeLimit(file)
   throwIfAborted(signal)
-  const input = new Uint8Array(await file.arrayBuffer())
+  const input = await file.arrayBuffer()
   throwIfAborted(signal)
-  const document = await dependencies.load(input)
+  const result = await dependencies.process(input, { mode: 'inspect' }, signal)
   throwIfAborted(signal)
   const inspection = {
-    hasDigitalSignature: document.hasDigitalSignature,
-    pageCount: document.pageCount,
+    hasDigitalSignature: result.hasDigitalSignature,
+    pageCount: result.pageCount,
   }
   assertPdfCanBeRewritten(inspection)
   return inspection
@@ -122,6 +85,7 @@ export const createPdfCompressionProcessor = (
   label: 'Optimizador estructural PDF',
   formatIds: ['pdf'],
   compress: async (input, _options, context) => {
+    assertPdfFileWithinSizeLimit(input.file)
     context.reportProgress({
       completed: 0,
       message: 'Leyendo estructura PDF…',
@@ -130,11 +94,15 @@ export const createPdfCompressionProcessor = (
     })
     throwIfAborted(context.signal)
 
-    const inputBytes = new Uint8Array(await input.file.arrayBuffer())
+    const inputBytes = await input.file.arrayBuffer()
     throwIfAborted(context.signal)
-    const document = await dependencies.load(inputBytes)
+    const result = await dependencies.process(
+      inputBytes,
+      { mode: 'compress' },
+      context.signal,
+    )
     throwIfAborted(context.signal)
-    assertPdfCanBeRewritten(document)
+    assertPdfCanBeRewritten(result)
     context.reportProgress({
       completed: 1,
       message: 'Estructura validada',
@@ -148,8 +116,15 @@ export const createPdfCompressionProcessor = (
       total: 3,
     })
 
-    const optimizedBytes = await document.save()
-    throwIfAborted(context.signal)
+    const optimizedOutput = result.output
+    if (!optimizedOutput) {
+      throw new CompressionCoreError(
+        'invalid-processor-output',
+        'El optimizador devolvió un archivo que no es un PDF válido.',
+      )
+    }
+
+    const optimizedBytes = new Uint8Array(optimizedOutput)
 
     if (
       optimizedBytes.byteLength <= PDF_SIGNATURE.length ||
@@ -166,7 +141,7 @@ export const createPdfCompressionProcessor = (
     const usedOriginal = optimizedBytes.byteLength >= input.file.size
     const blob = usedOriginal
       ? new Blob([input.file], { type: 'application/pdf' })
-      : new Blob([Uint8Array.from(optimizedBytes).buffer], {
+      : new Blob([optimizedOutput], {
           type: 'application/pdf',
         })
 
@@ -182,7 +157,7 @@ export const createPdfCompressionProcessor = (
       fileName: `${getSafeFileBaseName(input.file.name)}-comprimido.pdf`,
       metadata: {
         mode: 'structural',
-        pageCount: document.pageCount,
+        pageCount: result.pageCount,
         preservesInteractiveContent: true,
         usedOriginal,
         useObjectStreams: true,

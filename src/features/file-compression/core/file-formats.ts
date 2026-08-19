@@ -34,6 +34,8 @@ const JPEG_SIGNATURE = [0xff, 0xd8, 0xff] as const
 const WEBP_SIGNATURE_LENGTH = 12
 const AVIF_SIGNATURE_LENGTH = 64
 
+export const MAXIMUM_PDF_FILE_SIZE_BYTES = 50 * 1024 * 1024
+
 const readUint32BigEndian = (bytes: Uint8Array, offset: number) =>
   ((bytes[offset] * 0x1000000) +
     (bytes[offset + 1] << 16) +
@@ -83,6 +85,7 @@ export const DEFAULT_COMPRESSION_FORMATS = [
   {
     id: 'pdf',
     label: 'PDF',
+    maximumFileSizeBytes: MAXIMUM_PDF_FILE_SIZE_BYTES,
     mimeType: 'application/pdf',
     mimeTypes: ['application/pdf'],
     extensions: ['pdf'],

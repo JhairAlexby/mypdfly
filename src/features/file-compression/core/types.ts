@@ -1,6 +1,7 @@
 export type CompressionFormatDefinition = {
   readonly id: string
   readonly label: string
+  readonly maximumFileSizeBytes?: number
   readonly mimeType: string
   readonly mimeTypes: readonly string[]
   readonly extensions: readonly string[]

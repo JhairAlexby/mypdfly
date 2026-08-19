@@ -105,13 +105,13 @@ test('cancela el archivo activo y no inicia los restantes', async () => {
     formatIds: ['jpeg'],
     compress: async (_input, _options, context) => {
       started += 1
-      controller.abort()
       return new Promise((_resolve, reject) => {
         context.signal.addEventListener(
           'abort',
           () => reject(new OperationCancelledError()),
           { once: true },
         )
+        controller.abort()
       })
     },
   })

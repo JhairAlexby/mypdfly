@@ -2,6 +2,7 @@ export type CompressionCoreErrorCode =
   | 'duplicate-processor'
   | 'empty-file'
   | 'extension-signature-mismatch'
+  | 'file-too-large'
   | 'invalid-pdf'
   | 'invalid-batch'
   | 'invalid-processor'

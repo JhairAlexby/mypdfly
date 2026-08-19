@@ -15,8 +15,12 @@ export {
   findFormatById,
   findFormatByMimeType,
   hasIsoBmffFileTypeBrand,
+  MAXIMUM_PDF_FILE_SIZE_BYTES,
 } from './file-formats'
-export { validateCompressionFile } from './file-validation'
+export {
+  assertCompressionFileWithinSizeLimit,
+  validateCompressionFile,
+} from './file-validation'
 export {
   compressionProcessorRegistry,
   CompressionProcessorRegistry,

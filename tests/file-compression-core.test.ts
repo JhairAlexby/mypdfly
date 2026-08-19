@@ -5,6 +5,7 @@ import {
   CompressionCoreError,
   CompressionJob,
   CompressionProcessorRegistry,
+  MAXIMUM_PDF_FILE_SIZE_BYTES,
   validateCompressionFile,
   type CompressionProcessor,
   type CompressionJobState,
@@ -130,6 +131,19 @@ test('rechaza archivos vacíos o con una firma desconocida', async () => {
       createFile([0x00, 0x01, 0x02], 'desconocido.pdf', 'application/pdf'),
     ),
     (error) => getErrorCode(error) === 'unsupported-signature',
+  )
+})
+
+test('rechaza un PDF sobre el límite seguro antes de procesarlo', async () => {
+  const file = createFile(PDF_BYTES, 'demasiado-grande.pdf', 'application/pdf')
+  Object.defineProperty(file, 'size', {
+    configurable: true,
+    value: MAXIMUM_PDF_FILE_SIZE_BYTES + 1,
+  })
+
+  await assert.rejects(
+    validateCompressionFile(file),
+    (error) => getErrorCode(error) === 'file-too-large',
   )
 })
 
@@ -318,6 +332,63 @@ test('cancela un trabajo activo y conserva un estado terminal estable', async ()
 
   job.reset()
   assert.equal(job.state.status, 'idle')
+})
+
+test('no permite iniciar otro trabajo mientras el procesador cancelado sigue activo', async () => {
+  const registry = new CompressionProcessorRegistry()
+  let releaseProcessor = () => undefined
+  let notifyStarted = () => undefined
+  let executionCount = 0
+  const processorReleased = new Promise<void>((resolve) => {
+    releaseProcessor = resolve
+  })
+  const processorStarted = new Promise<void>((resolve) => {
+    notifyStarted = resolve
+  })
+  const processor: CompressionProcessor = {
+    compress: async () => {
+      executionCount += 1
+      if (executionCount === 1) {
+        notifyStarted()
+        await processorReleased
+      }
+
+      return {
+        blob: new Blob([Uint8Array.from([1])], { type: 'image/jpeg' }),
+        fileName: 'salida.jpg',
+      }
+    },
+    formatIds: ['jpeg'],
+    id: 'jpeg-lento',
+    label: 'JPEG lento',
+  }
+  registry.register(processor)
+
+  const job = new CompressionJob(registry)
+  const firstRun = job.start({
+    file: createFile(JPEG_BYTES, 'primero.jpg', 'image/jpeg'),
+  })
+  await processorStarted
+
+  assert.equal(job.cancel(), true)
+  assert.equal(job.isActive, true)
+  assert.equal(job.state.status, 'processing')
+  await assert.rejects(
+    job.start({
+      file: createFile(JPEG_BYTES, 'segundo.jpg', 'image/jpeg'),
+    }),
+    (error) => getErrorCode(error) === 'job-active',
+  )
+
+  releaseProcessor()
+  const cancelledState = await firstRun
+  assert.equal(cancelledState.status, 'cancelled')
+  assert.equal(job.isActive, false)
+
+  const secondRun = await job.start({
+    file: createFile(JPEG_BYTES, 'segundo.jpg', 'image/jpeg'),
+  })
+  assert.equal(secondRun.status, 'success')
 })
 
 test('convierte errores de validación o falta de procesador en estado error', async () => {

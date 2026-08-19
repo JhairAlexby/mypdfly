@@ -28,21 +28,34 @@ const createDefaultCancellationError = () =>
 export const getUniqueArchiveFileNames = (
   fileNames: readonly string[],
 ) => {
-  const counts = new Map<string, number>()
+  const usedNames = new Set<string>()
+  const normalize = (name: string) =>
+    name.toLocaleLowerCase('es-MX')
 
   return fileNames.map((fileName) => {
     const safeName = sanitizeFileNamePart(fileName) || 'archivo'
-    const normalizedName = safeName.toLocaleLowerCase('es-MX')
-    const count = (counts.get(normalizedName) ?? 0) + 1
-    counts.set(normalizedName, count)
 
-    if (count === 1) return safeName
+    if (!usedNames.has(normalize(safeName))) {
+      usedNames.add(normalize(safeName))
+      return safeName
+    }
 
     const extension = getFileExtension(safeName)
     const baseName = removeFileExtension(safeName)
-    return extension
-      ? `${baseName} (${count}).${extension}`
-      : `${baseName} (${count})`
+    let suffix = 2
+    const createCandidate = () =>
+      extension
+        ? `${baseName} (${suffix}).${extension}`
+        : `${baseName} (${suffix})`
+    let candidate = createCandidate()
+
+    while (usedNames.has(normalize(candidate))) {
+      suffix += 1
+      candidate = createCandidate()
+    }
+
+    usedNames.add(normalize(candidate))
+    return candidate
   })
 }
 

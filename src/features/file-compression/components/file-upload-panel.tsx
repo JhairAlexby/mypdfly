@@ -100,7 +100,7 @@ export function FileUploadPanel({
                 : 'Suelta tus archivos aquí'}
             </p>
             <p className="mt-1 text-sm text-slate-500">
-              PDF, JPEG, PNG, WebP o AVIF estático
+              PDF de hasta 50 MB, JPEG, PNG, WebP o AVIF estático
             </p>
           </div>
 

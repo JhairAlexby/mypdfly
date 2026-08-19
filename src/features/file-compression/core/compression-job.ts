@@ -207,13 +207,10 @@ export class CompressionJob {
           status: 'processing',
         })
       }
-      const output = await raceWithAbort(
-        processor.compress(validatedInput, options, {
-          reportProgress,
-          signal: controller.signal,
-        }),
-        controller.signal,
-      )
+      const output = await processor.compress(validatedInput, options, {
+        reportProgress,
+        signal: controller.signal,
+      })
       acceptsProgress = false
       throwIfAborted(controller.signal)
 

@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "experiment:pdf": "tsx experiments/pdf-compression/run.ts",
+    "experiment:pdf:typecheck": "tsc -p experiments/pdf-compression/tsconfig.json",
     "lint": "eslint .",
     "test": "tsx --test tests/pdf-export.test.ts tests/image-encoders.test.ts tests/page-operations.test.ts tests/file-compression-core.test.ts tests/jpeg-compression.test.ts tests/png-compression.test.ts",
     "preview": "vite preview"

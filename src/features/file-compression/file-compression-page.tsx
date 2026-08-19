@@ -1,7 +1,7 @@
 import { ArrowLeft, FileArchive } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { ImageCompressionWorkspace } from './components/image-compression-workspace'
+import { FileCompressionWorkspace } from './components/file-compression-workspace'
 
 type FileCompressionPageProps = {
   homeHref: string
@@ -38,11 +38,11 @@ export function FileCompressionPage({
             Comprimir archivos
           </h1>
           <p className="mx-auto mt-4 max-w-lg text-pretty text-sm leading-6 text-slate-600 sm:text-base sm:leading-7">
-            Comprime JPEG o PNG, compara el resultado y descarga la nueva versión sin que la imagen salga de tu navegador.
+            Optimiza PDF e imágenes, procesa varios archivos en secuencia y descarga cada resultado o un ZIP, sin subir nada a un servidor.
           </p>
         </div>
 
-        <ImageCompressionWorkspace />
+        <FileCompressionWorkspace />
       </section>
     </main>
   )

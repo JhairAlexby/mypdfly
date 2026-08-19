@@ -14,6 +14,11 @@ export {
 } from './file-names'
 export { formatFileSize } from './format-file-size'
 export {
+  createZipArchive,
+  getUniqueArchiveFileNames,
+} from './zip'
+export type { ZipArchiveOptions, ZipBlobEntry } from './zip'
+export {
   createImageEncoder,
   DEFAULT_JPEG_QUALITY,
   encodeCanvasAsImage,

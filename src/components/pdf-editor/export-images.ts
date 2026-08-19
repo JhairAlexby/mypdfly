@@ -1,9 +1,8 @@
-import { zip, type AsyncTerminable } from 'fflate'
-
 import {
   downloadBlob,
   getEditedDocumentBaseName,
 } from './download-utils'
+import { createZipArchive } from '@/lib/files/zip'
 import {
   encodeCanvasAsImage,
   type ImageEncoderOptions,
@@ -32,53 +31,6 @@ const IMAGE_EXTENSIONS: Record<ImageFormat, 'jpg' | 'png'> = {
   jpeg: 'jpg',
   png: 'png',
 }
-
-const createZipBlob = (
-  entries: Record<string, Uint8Array>,
-  signal?: AbortSignal,
-) =>
-  new Promise<Blob>((resolve, reject) => {
-    let settled = false
-    let cancelRequested = false
-    let terminateZip: AsyncTerminable | null = null
-
-    const cleanup = () => signal?.removeEventListener('abort', onAbort)
-    const cancel = () => {
-      cancelRequested = true
-      if (settled) {
-        terminateZip?.()
-        return
-      }
-      settled = true
-      terminateZip?.()
-      cleanup()
-      reject(new ExportCancelledError())
-    }
-    const onAbort = () => cancel()
-
-    try {
-      throwIfExportAborted(signal)
-      signal?.addEventListener('abort', onAbort, { once: true })
-      terminateZip = zip(entries, { level: 0 }, (error, bytes) => {
-        if (settled) return
-        settled = true
-        cleanup()
-
-        if (error) {
-          reject(error)
-          return
-        }
-
-        resolve(new Blob([bytes], { type: 'application/zip' }))
-      })
-      if (cancelRequested || signal?.aborted) cancel()
-    } catch (error) {
-      if (settled) return
-      settled = true
-      cleanup()
-      reject(error)
-    }
-  })
 
 const getPageImageFileName = (
   fileName: string,
@@ -123,7 +75,7 @@ export async function exportEditedImages({
   if (!pages.length) throw new Error('No hay páginas para exportar.')
 
   const sourcesById = new Map(sources.map((source) => [source.id, source]))
-  const zipEntries: Record<string, Uint8Array> = {}
+  const zipEntries: Array<{ blob: Blob; fileName: string }> = []
   let singleImage: Blob | null = null
 
   for (const [pageIndex, pageReference] of pages.entries()) {
@@ -154,13 +106,16 @@ export async function exportEditedImages({
       if (pages.length === 1) {
         singleImage = imageBlob
       } else {
-        zipEntries[getPageImageFileName(
-          fileName,
-          format,
-          pageIndex + 1,
-          pages.length,
-          combined,
-        )] = new Uint8Array(await imageBlob.arrayBuffer())
+        zipEntries.push({
+          blob: imageBlob,
+          fileName: getPageImageFileName(
+            fileName,
+            format,
+            pageIndex + 1,
+            pages.length,
+            combined,
+          ),
+        })
       }
     } finally {
       if (renderedCanvas) {
@@ -176,7 +131,10 @@ export async function exportEditedImages({
     return
   }
 
-  const archive = await createZipBlob(zipEntries, signal)
+  const archive = await createZipArchive(zipEntries, {
+    createCancellationError: () => new ExportCancelledError(),
+    signal,
+  })
   throwIfExportAborted(signal)
   downloadBlob(archive, getEditedImagesZipFileName(fileName, combined))
 }

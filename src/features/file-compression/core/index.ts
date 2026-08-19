@@ -1,10 +1,20 @@
 export { CompressionJob } from './compression-job'
+export { processCompressionBatch } from './compression-batch'
+export type {
+  CompressionBatchContext,
+  CompressionBatchItemOutcome,
+  CompressionBatchItemRequest,
+  CompressionBatchProgress,
+  CompressionBatchTerminalState,
+} from './compression-batch'
 export { CompressionCoreError } from './errors'
 export type { CompressionCoreErrorCode } from './errors'
 export {
   DEFAULT_COMPRESSION_FORMATS,
   findFormatByExtension,
+  findFormatById,
   findFormatByMimeType,
+  hasIsoBmffFileTypeBrand,
 } from './file-formats'
 export { validateCompressionFile } from './file-validation'
 export {

@@ -29,6 +29,19 @@ const PNG_BYTES = [
   0x00,
 ]
 const JPEG_BYTES = [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]
+const WEBP_BYTES = [
+  0x52, 0x49, 0x46, 0x46,
+  0x10, 0x00, 0x00, 0x00,
+  0x57, 0x45, 0x42, 0x50,
+  0x56, 0x50, 0x38, 0x20,
+]
+const AVIF_BYTES = [
+  0x00, 0x00, 0x00, 0x18,
+  0x66, 0x74, 0x79, 0x70,
+  0x61, 0x76, 0x69, 0x66,
+  0x00, 0x00, 0x00, 0x00,
+  0x61, 0x76, 0x69, 0x66,
+]
 
 const createFile = (
   bytes: readonly number[],
@@ -54,6 +67,22 @@ test('detecta PDF, PNG y JPEG mediante su firma binaria', async () => {
   assert.equal(png.detectedMimeType, 'image/png')
   assert.equal(jpeg.format.id, 'jpeg')
   assert.equal(jpeg.detectedMimeType, 'image/jpeg')
+})
+
+test('detecta WebP y AVIF mediante contenedor y marca interna', async () => {
+  const [webp, avif] = await Promise.all([
+    validateCompressionFile(
+      createFile(WEBP_BYTES, 'imagen.webp', 'image/webp'),
+    ),
+    validateCompressionFile(
+      createFile(AVIF_BYTES, 'imagen.avif', 'image/avif'),
+    ),
+  ])
+
+  assert.equal(webp.format.id, 'webp')
+  assert.equal(webp.detectedMimeType, 'image/webp')
+  assert.equal(avif.format.id, 'avif')
+  assert.equal(avif.detectedMimeType, 'image/avif')
 })
 
 test('acepta MIME genérico si la firma y extensión son válidas', async () => {

@@ -177,13 +177,15 @@ test('cancela la optimización PNG activa', async () => {
   )
 })
 
-test('registra JPEG y PNG una sola vez en el registro común', () => {
+test('registra JPEG, PNG, WebP y AVIF una sola vez en el registro común', () => {
   const registry = new CompressionProcessorRegistry()
   const first = registerImageCompressionProcessors(registry)
   const second = registerImageCompressionProcessors(registry)
 
   assert.deepEqual(first, second)
-  assert.equal(registry.list().length, 2)
+  assert.equal(registry.list().length, 4)
   assert.equal(registry.resolve('jpeg'), first[0])
   assert.equal(registry.resolve('png'), first[1])
+  assert.equal(registry.resolve('webp'), first[2])
+  assert.equal(registry.resolve('avif'), first[3])
 })

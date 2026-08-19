@@ -6,7 +6,11 @@ import tailwindcss from '@tailwindcss/vite'
 // https://vite.dev/config/
 export default defineConfig({
   optimizeDeps: {
-    exclude: ['@jsquash/oxipng'],
+    exclude: [
+      '@jsquash/avif',
+      '@jsquash/oxipng',
+      '@jsquash/webp',
+    ],
   },
   plugins: [react(), tailwindcss()],
   resolve: {

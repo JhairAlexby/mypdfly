@@ -4,6 +4,8 @@ import {
   AlertCircle,
   Check,
   Eye,
+  FileArchive,
+  FileOutput,
   FileText,
   MousePointer2,
   ShieldCheck,
@@ -17,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { AppFooter } from '@/components/app-footer'
 import { AppHeader } from '@/components/app-header'
 import { NotFound } from '@/components/not-found'
+import { formatFileSize } from '@/lib/files'
 import {
   Card,
   CardContent,
@@ -33,17 +36,22 @@ const PdfEditor = lazy(() =>
   })),
 )
 
-const formatFileSize = (bytes: number) => {
-  if (bytes < 1024 * 1024) {
-    return `${Math.max(1, Math.round(bytes / 1024))} KB`
-  }
-
-  return `${new Intl.NumberFormat('es-MX', {
-    maximumFractionDigits: 1,
-  }).format(bytes / (1024 * 1024))} MB`
-}
+const FileCompressionPage = lazy(() =>
+  import('@/features/file-compression/file-compression-page').then((module) => ({
+    default: module.FileCompressionPage,
+  })),
+)
 
 const normalizePath = (path: string) => path.replace(/\/+$/, '') || '/'
+
+const getAppPath = (path: string) => {
+  const basePath = normalizePath(import.meta.env.BASE_URL)
+  const childPath = path.replace(/^\/+|\/+$/g, '')
+
+  return `${basePath === '/' ? '' : basePath}/${childPath}`
+}
+
+const compressionPath = getAppPath('comprimir')
 
 const isEditorPath = (pathname: string) => {
   const currentPath = normalizePath(pathname)
@@ -52,6 +60,9 @@ const isEditorPath = (pathname: string) => {
 
   return currentPath === basePath || currentPath === indexPath
 }
+
+const isCompressionPath = (pathname: string) =>
+  normalizePath(pathname) === compressionPath
 
 function PdfWorkspaceApp() {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -237,6 +248,45 @@ function PdfWorkspaceApp() {
                 Vista instantánea
               </div>
             </div>
+
+            <div className="mt-7 grid w-full gap-3 sm:grid-cols-2">
+              <Button
+                variant="outline"
+                asChild
+                className="h-auto min-h-14 justify-start gap-3 rounded-xl border-slate-200 bg-white/75 px-3.5 py-3 text-left shadow-sm hover:border-slate-300 hover:bg-white sm:px-4"
+              >
+                <a href={compressionPath}>
+                  <FileArchive className="size-5 shrink-0 text-slate-500" aria-hidden="true" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium text-slate-700">
+                      Comprimir archivos
+                    </span>
+                    <span className="mt-0.5 block text-xs font-normal text-slate-500">
+                      PDF · JPG · PNG · WebP · AVIF
+                    </span>
+                    <span className="mt-0.5 block text-[11px] font-medium text-[#e84c38]">
+                      Abrir herramienta
+                    </span>
+                  </span>
+                </a>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled
+                className="h-auto min-h-14 justify-start gap-3 rounded-xl border-slate-200 bg-white/75 px-3.5 py-3 text-left shadow-sm disabled:cursor-not-allowed disabled:opacity-100 sm:px-4"
+              >
+                <FileOutput className="size-5 shrink-0 text-slate-400" aria-hidden="true" />
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium text-slate-700">
+                    PDF a Word
+                  </span>
+                  <span className="mt-0.5 block text-xs font-normal text-slate-400">
+                    Próximamente
+                  </span>
+                </span>
+              </Button>
+            </div>
           </section>
 
           <section className="relative mx-auto w-full max-w-xl lg:max-w-none" aria-labelledby="upload-title">
@@ -321,6 +371,24 @@ function PdfWorkspaceApp() {
 }
 
 function App() {
+  if (isCompressionPath(window.location.pathname)) {
+    return (
+      <div className="flex min-h-svh flex-col overflow-hidden text-foreground">
+        <AppHeader />
+        <Suspense
+          fallback={
+            <main className="grid flex-1 place-items-center px-4 py-16 text-sm text-slate-500">
+              Preparando herramienta…
+            </main>
+          }
+        >
+          <FileCompressionPage homeHref={import.meta.env.BASE_URL} />
+        </Suspense>
+        <AppFooter />
+      </div>
+    )
+  }
+
   if (!isEditorPath(window.location.pathname)) {
     return (
       <div className="flex min-h-svh flex-col overflow-hidden text-foreground">

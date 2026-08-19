@@ -123,6 +123,9 @@ test('cancela una codificación pendiente sin esperar a toBlob', async () => {
 
   await assert.rejects(
     encoding,
-    (error) => error instanceof ExportCancelledError,
+    (error) =>
+      error instanceof ExportCancelledError &&
+      error.name === 'ExportCancelledError' &&
+      error.message === 'La exportación fue cancelada.',
   )
 })

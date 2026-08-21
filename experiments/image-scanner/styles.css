@@ -28,6 +28,21 @@ main {
   max-width: 760px;
 }
 
+.back-link {
+  display: inline-flex;
+  margin-bottom: 22px;
+  color: #596579;
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.back-link:hover,
+.back-link:focus-visible {
+  color: #e04b3a;
+  text-decoration: underline;
+}
+
 .eyebrow {
   margin: 0 0 12px;
   color: #e04b3a;

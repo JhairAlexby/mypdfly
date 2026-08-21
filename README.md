@@ -80,6 +80,7 @@ pnpm preview
 | `pnpm build` | Comprueba TypeScript y genera la versión de producción. |
 | `pnpm lint` | Ejecuta ESLint sobre el proyecto. |
 | `pnpm test` | Ejecuta las pruebas visuales, de orden, eliminación de páginas, codificación PNG/JPEG, ZIP y cancelación. |
+| `pnpm experiment:image-scanner` | Abre el laboratorio local de imágenes a PDF. |
 | `pnpm preview` | Sirve localmente la compilación de producción. |
 
 ## Privacidad

@@ -13,7 +13,7 @@ Este laboratorio valida la parte de mayor riesgo de la futura herramienta de im�
 - Memoria del navegador mediante `measureUserAgentSpecificMemory` o `performance.memory` cuando el navegador lo permita.
 - Medición raw, gzip y Brotli del build aislado.
 
-No genera PDF, no modifica el editor y no añade una ruta a `src/App.tsx`.
+No genera PDF todavía ni modifica el editor. La portada enlaza a este laboratorio como una entrada separada (`/experiments/image-scanner/`), manteniendo OpenCV fuera del bundle inicial de la aplicación.
 
 ## Ejecución
 

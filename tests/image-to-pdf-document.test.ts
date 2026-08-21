@@ -5,9 +5,11 @@ import {
   MAX_IMAGE_COUNT,
   MAX_IMAGE_SIZE_BYTES,
   MAX_TOTAL_IMAGE_SIZE_BYTES,
+  applyImageFilterToAll,
   moveImage,
   removeImage,
   rotateImage,
+  setImageFilter,
   validateImageFile,
   type ImageDocumentItem,
 } from '../src/features/image-to-pdf/core/document.ts'
@@ -17,6 +19,10 @@ import {
   getPdfPageLayout,
   isPdfExportCancelled,
 } from '../src/features/image-to-pdf/core/pdf-export.ts'
+import {
+  getImageFilterCss,
+  IMAGE_FILTERS,
+} from '../src/features/image-to-pdf/core/image-filters.ts'
 
 const createImageFile = (
   name: string,
@@ -31,6 +37,7 @@ const createImageFile = (
 
 const createItem = (id: string): ImageDocumentItem => ({
   file: createImageFile(`${id}.jpg`),
+  filter: 'original',
   height: 100,
   id,
   previewUrl: `blob:${id}`,
@@ -109,6 +116,31 @@ test('reordena, elimina y rota páginas sin mutar la colección original', () =>
   assert.equal(rotateImage(items[0]).rotation, 90)
   assert.equal(rotateImage({ ...items[0], rotation: 270 }).rotation, 0)
   assert.deepEqual(items.map((item) => item.id), ['one', 'two', 'three'])
+})
+
+test('aplica filtros por página o a todo el documento sin mutar archivos ni páginas originales', () => {
+  const items = [createItem('one'), createItem('two')]
+
+  const selected = setImageFilter(items, 'two', 'clean-document')
+  assert.equal(selected[0]?.filter, 'original')
+  assert.equal(selected[1]?.filter, 'clean-document')
+  assert.equal(items[1]?.filter, 'original')
+  assert.equal(selected[1]?.file, items[1]?.file)
+
+  const all = applyImageFilterToAll(selected, 'grayscale')
+  assert.deepEqual(all.map((item) => item.filter), ['grayscale', 'grayscale'])
+  assert.deepEqual(items.map((item) => item.filter), ['original', 'original'])
+})
+
+test('expone los cinco presets de filtro con una definición reutilizable para preview y canvas', () => {
+  assert.deepEqual(
+    IMAGE_FILTERS.map((definition) => definition.label),
+    ['Original', 'Natural', 'Documento limpio', 'Grises', 'Blanco y negro'],
+  )
+  assert.equal(getImageFilterCss('original'), 'none')
+  assert.notEqual(getImageFilterCss('natural'), getImageFilterCss('original'))
+  assert.notEqual(getImageFilterCss('clean-document'), getImageFilterCss('grayscale'))
+  assert.notEqual(getImageFilterCss('black-and-white'), getImageFilterCss('grayscale'))
 })
 
 test('calcula páginas A4 y Carta según la orientación de cada imagen', () => {

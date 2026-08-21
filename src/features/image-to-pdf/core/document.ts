@@ -1,3 +1,5 @@
+import type { ImageFilter } from './image-filters'
+
 export const IMAGE_ACCEPT = [
   'image/jpeg',
   'image/png',
@@ -34,6 +36,7 @@ export type ImageMimeType = (typeof IMAGE_MIME_TYPES)[number]
 export type ImageDocumentItem = {
   readonly id: string
   readonly file: File
+  readonly filter: ImageFilter
   readonly previewUrl: string
   readonly width: number
   readonly height: number
@@ -183,6 +186,17 @@ export const rotateImage = (
   ...item,
   rotation: ((item.rotation + 90) % 360) as ImageDocumentItem['rotation'],
 })
+
+export const setImageFilter = (
+  items: readonly ImageDocumentItem[],
+  id: string,
+  filter: ImageFilter,
+) => items.map((item) => (item.id === id ? { ...item, filter } : item))
+
+export const applyImageFilterToAll = (
+  items: readonly ImageDocumentItem[],
+  filter: ImageFilter,
+) => items.map((item) => ({ ...item, filter }))
 
 export const removeImage = (
   items: readonly ImageDocumentItem[],

@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Trash2,
   UploadCloud,
+  WandSparkles,
 } from 'lucide-react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -35,11 +36,19 @@ import {
   MAX_IMAGE_SIZE_BYTES,
   MAX_TOTAL_IMAGE_SIZE_BYTES,
   moveImage,
+  applyImageFilterToAll,
   removeImage,
   rotateImage,
+  setImageFilter,
   type ImageDocumentItem,
   validateImageFile,
 } from './core/document'
+import {
+  getImageFilterCss,
+  getImageFilterDefinition,
+  IMAGE_FILTERS,
+  type ImageFilter,
+} from './core/image-filters'
 import {
   createImagesPdf,
   isPdfExportCancelled,
@@ -84,6 +93,7 @@ const createImageDocumentItem = async (file: File): Promise<ImageDocumentItem> =
     const dimensions = await readImageDimensions(file)
     return {
       file,
+      filter: 'original',
       height: dimensions.height,
       id: crypto.randomUUID(),
       previewUrl,
@@ -116,6 +126,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
   const [isReading, setIsReading] = useState(false)
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [activeFilterItemId, setActiveFilterItemId] = useState<string | null>(null)
   const [pagePreset, setPagePreset] = useState<PdfPagePreset>('a4')
   const [marginMm, setMarginMm] = useState<PdfMarginMm>(10)
   const [fitMode, setFitMode] = useState<PdfFitMode>('contain')
@@ -219,6 +230,20 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
     if (isExporting) return
     const currentIndex = items.findIndex((item) => item.id === id)
     setItems(moveImage(items, currentIndex, currentIndex + direction))
+  }
+
+  const updateItemFilter = (id: string, filter: ImageFilter) => {
+    if (isExporting) return
+    setItems(setImageFilter(items, id, filter))
+  }
+
+  const activeFilterItem =
+    items.find((item) => item.id === activeFilterItemId) ?? items[0]
+  const activeFilter = activeFilterItem?.filter ?? 'original'
+
+  const applyActiveFilterToAll = () => {
+    if (!activeFilterItem || isExporting) return
+    setItems(applyImageFilterToAll(items, activeFilter))
   }
 
   const clearDocument = () => {
@@ -500,7 +525,10 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                         src={item.previewUrl}
                         alt={`Vista previa de ${item.file.name}`}
                         className="max-h-full max-w-full rounded-lg object-contain shadow-sm transition-transform duration-300"
-                        style={{ transform: `rotate(${item.rotation}deg)` }}
+                        style={{
+                          filter: getImageFilterCss(item.filter),
+                          transform: `rotate(${item.rotation}deg)`,
+                        }}
                       />
                       <span className="absolute top-3 left-3 inline-flex size-7 items-center justify-center rounded-full bg-slate-950/80 text-xs font-semibold text-white">
                         {index + 1}
@@ -573,9 +601,116 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                           <Trash2 aria-hidden="true" />
                         </Button>
                       </div>
+                      <label className="grid gap-1.5 text-xs font-medium text-slate-600">
+                        Filtro
+                        <select
+                          aria-label={`Filtro de ${item.file.name}`}
+                          className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm font-normal text-slate-900 outline-none focus:border-slate-400 focus:ring-3 focus:ring-slate-200"
+                          value={item.filter}
+                          onChange={(event) => {
+                            setActiveFilterItemId(item.id)
+                            updateItemFilter(item.id, event.target.value as ImageFilter)
+                          }}
+                          disabled={isExporting}
+                        >
+                          {IMAGE_FILTERS.map((definition) => (
+                            <option key={definition.id} value={definition.id}>
+                              {definition.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                     </div>
                   </article>
                 ))}
+              </div>
+            </section>
+          )}
+
+          {items.length > 0 && activeFilterItem && (
+            <section
+              aria-labelledby="image-filters-title"
+              data-testid="image-filters"
+              className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5"
+            >
+              <div className="mb-4 flex items-start gap-3">
+                <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-white text-[#e84c38] shadow-sm ring-1 ring-slate-200">
+                  <WandSparkles className="size-4" aria-hidden="true" />
+                </div>
+                <div>
+                  <h2 id="image-filters-title" className="text-sm font-semibold text-slate-950">
+                    Filtros de imagen
+                  </h2>
+                  <p className="mt-0.5 text-xs leading-5 text-slate-500">
+                    Son ajustes no destructivos: el archivo original permanece intacto y solo se aplican al PDF.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)]">
+                <div className="min-w-0">
+                  <label className="grid max-w-sm gap-1.5 text-xs font-medium text-slate-600">
+                    Vista previa de
+                    <select
+                      aria-label="Página para previsualizar filtro"
+                      className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm font-normal text-slate-900 outline-none focus:border-slate-400 focus:ring-3 focus:ring-slate-200"
+                      value={activeFilterItem.id}
+                      onChange={(event) => setActiveFilterItemId(event.target.value)}
+                      disabled={isExporting}
+                    >
+                      {items.map((item, index) => (
+                        <option key={item.id} value={item.id}>
+                          Página {index + 1} · {item.file.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="mt-3 flex min-h-52 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white p-4 sm:min-h-64">
+                    <img
+                      src={activeFilterItem.previewUrl}
+                      alt={`Vista previa de ${getImageFilterDefinition(activeFilter).label} para ${activeFilterItem.file.name}`}
+                      className="max-h-64 max-w-full rounded-lg object-contain shadow-sm"
+                      style={{
+                        filter: getImageFilterCss(activeFilter),
+                        transform: `rotate(${activeFilterItem.rotation}deg)`,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex min-w-0 flex-col justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-medium text-slate-600">Filtro de la página activa</p>
+                    <div className="mt-2 flex flex-wrap gap-2" role="group" aria-label="Filtros disponibles">
+                      {IMAGE_FILTERS.map((definition) => (
+                        <Button
+                          key={definition.id}
+                          type="button"
+                          size="sm"
+                          variant={activeFilter === definition.id ? 'default' : 'outline'}
+                          className="rounded-lg"
+                          aria-pressed={activeFilter === definition.id}
+                          onClick={() => updateItemFilter(activeFilterItem.id, definition.id)}
+                          disabled={isExporting}
+                        >
+                          {definition.label}
+                        </Button>
+                      ))}
+                    </div>
+                    <p className="mt-3 text-xs leading-5 text-slate-500">
+                      {getImageFilterDefinition(activeFilter).description}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full rounded-xl bg-white sm:w-auto sm:self-start"
+                    onClick={applyActiveFilterToAll}
+                    disabled={isExporting || items.every((item) => item.filter === activeFilter)}
+                  >
+                    Aplicar a todas
+                  </Button>
+                </div>
               </div>
             </section>
           )}

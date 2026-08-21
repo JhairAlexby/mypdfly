@@ -3,6 +3,7 @@ import {
   throwIfExportAborted,
 } from '@/components/pdf-editor/export-cancellation'
 import type { ImageDocumentItem } from './document'
+import { getImageFilterCss } from './image-filters'
 
 export type PdfPagePreset = 'a4' | 'letter' | 'image'
 export type PdfFitMode = 'contain' | 'cover' | 'stretch'
@@ -202,6 +203,7 @@ const renderImagePage = async (
     context.fillStyle = '#ffffff'
     context.fillRect(0, 0, canvas.width, canvas.height)
     context.save()
+    context.filter = getImageFilterCss(item.filter)
     context.translate(
       (drawRect.xPt + drawRect.widthPt / 2) * renderScale,
       (drawRect.yPt + drawRect.heightPt / 2) * renderScale,

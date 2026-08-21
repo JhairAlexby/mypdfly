@@ -71,6 +71,7 @@ test('genera un PDF con progreso monotónico y orientación A4 automática', asy
   const file = createSourceFile()
   const item: ImageDocumentItem = {
     file,
+    filter: 'grayscale',
     height: 140,
     id: 'sample',
     previewUrl: 'blob:sample',
@@ -118,8 +119,10 @@ test('genera un PDF con progreso monotónico y orientación A4 automática', asy
     1,
   ).data
   const marginPixel = renderedContext.getImageData(4, 4, 1, 1).data
+  const filteredPixel = renderedContext.getImageData(120, 180, 1, 1).data
   assert.ok(centerPixel[0] < 80 && centerPixel[1] < 80 && centerPixel[2] < 80)
   assert.ok(marginPixel[0] > 240 && marginPixel[1] > 240 && marginPixel[2] > 240)
+  assert.ok(Math.max(...filteredPixel.slice(0, 3)) - Math.min(...filteredPixel.slice(0, 3)) <= 3)
 
   await loadingTask.destroy()
 })

@@ -3,7 +3,9 @@ import test from 'node:test'
 
 import {
   MAX_IMAGE_COUNT,
+  MAX_IMAGE_PIXELS,
   MAX_IMAGE_SIZE_BYTES,
+  MAX_TOTAL_IMAGE_PIXELS,
   MAX_TOTAL_IMAGE_SIZE_BYTES,
   applyImageFilterToAll,
   moveImage,
@@ -16,6 +18,7 @@ import {
   type ImageDocumentItem,
 } from '../src/features/image-to-pdf/core/document.ts'
 import {
+  assertImageExportBudget,
   createImagesPdf,
   getPdfImageDrawRect,
   getPdfPageLayout,
@@ -100,6 +103,22 @@ test('aplica límites por imagen, por documento, por cantidad y evita duplicados
     validateImageFile(duplicate, { existingFiles: [duplicate] }).code,
     'duplicate-file',
   )
+  assert.equal(
+    validateImageFile(createImageFile('gigante.webp', 'image/webp'), {
+      height: 5_000,
+      width: 9_000,
+    }).code,
+    'image-too-many-pixels',
+  )
+  assert.equal(
+    validateImageFile(createImageFile('lote.avif', 'image/avif'), {
+      existingTotalPixels: MAX_TOTAL_IMAGE_PIXELS - 1,
+      height: 2,
+      width: 2,
+    }).code,
+    'total-pixels-too-large',
+  )
+  assert.ok(MAX_IMAGE_PIXELS < MAX_TOTAL_IMAGE_PIXELS)
 })
 
 test('reordena, elimina y rota páginas sin mutar la colección original', () => {
@@ -218,6 +237,19 @@ test('mantiene tamaño de imagen, márgenes y reglas de ajuste', () => {
   assert.ok(cover.heightPt >= getPdfPageLayout(item, 'a4', 10).contentHeightPt)
   assert.equal(stretch.widthPt, getPdfPageLayout(item, 'a4', 10).contentWidthPt)
   assert.equal(stretch.heightPt, getPdfPageLayout(item, 'a4', 10).contentHeightPt)
+})
+
+test('protege la exportación contra imágenes con un presupuesto de píxeles excesivo', () => {
+  const oversized = {
+    ...createItem('oversized'),
+    height: 6_000,
+    width: 7_000,
+  }
+
+  assert.throws(
+    () => assertImageExportBudget([oversized]),
+    /supera el límite de 40 MP/,
+  )
 })
 
 test('rechaza una exportación cancelada antes de cargar el procesador PDF', async () => {

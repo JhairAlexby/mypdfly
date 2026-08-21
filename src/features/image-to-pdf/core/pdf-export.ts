@@ -2,8 +2,14 @@ import {
   ExportCancelledError,
   throwIfExportAborted,
 } from '@/components/pdf-editor/export-cancellation'
-import type { ImageDocumentItem } from './document'
+import {
+  getImagePixelCount,
+  MAX_IMAGE_PIXELS,
+  MAX_TOTAL_IMAGE_PIXELS,
+  type ImageDocumentItem,
+} from './document'
 import { getImageFilterCss } from './image-filters'
+import { decodeImageFile } from './image-source'
 import { getPerspectiveOutputSize, isScannerQuadrilateralValid } from './scanner/geometry'
 import { renderPerspectiveCanvas } from './scanner/perspective'
 
@@ -137,36 +143,25 @@ export const getPdfImageDrawRect = (
   }
 }
 
-const loadImageSource = async (file: File) => {
-  if (typeof createImageBitmap === 'function') {
-    const bitmap = await createImageBitmap(file, {
-      imageOrientation: 'from-image',
-    })
-    return {
-      close: () => bitmap.close(),
-      height: bitmap.height,
-      source: bitmap,
-      width: bitmap.width,
+export const assertImageExportBudget = (
+  items: readonly ImageDocumentItem[],
+) => {
+  let totalPixels = 0
+
+  for (const item of items) {
+    const pixels = getImagePixelCount(item.width, item.height)
+    if (pixels > MAX_IMAGE_PIXELS) {
+      throw new Error(
+        `La imagen ${item.file.name} supera el límite de ${Math.round(MAX_IMAGE_PIXELS / 1_000_000)} MP.`,
+      )
     }
+    totalPixels += pixels
   }
 
-  const url = URL.createObjectURL(file)
-  const image = new Image()
-  try {
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve()
-      image.onerror = () => reject(new Error('No se pudo leer una de las imágenes.'))
-      image.src = url
-    })
-    return {
-      close: () => URL.revokeObjectURL(url),
-      height: image.naturalHeight,
-      source: image,
-      width: image.naturalWidth,
-    }
-  } catch (error) {
-    URL.revokeObjectURL(url)
-    throw error
+  if (totalPixels > MAX_TOTAL_IMAGE_PIXELS) {
+    throw new Error(
+      `El documento supera el límite de ${Math.round(MAX_TOTAL_IMAGE_PIXELS / 1_000_000)} MP.`,
+    )
   }
 }
 
@@ -191,7 +186,7 @@ const renderImagePage = async (
   if (item.scanner.active && !isScannerQuadrilateralValid(item.scanner.corners)) {
     throw new Error('Las esquinas del escáner no forman un cuadrilátero válido.')
   }
-  const image = await loadImageSource(item.file)
+  const image = await decodeImageFile(item.file, signal)
   let perspective: Awaited<ReturnType<typeof renderPerspectiveCanvas>> | null = null
   let canvas: HTMLCanvasElement | null = null
 
@@ -266,6 +261,7 @@ export async function createImagesPdf(
 ) {
   if (!items.length) throw new Error('Agrega al menos una imagen antes de exportar.')
   throwIfExportAborted(options.signal)
+  assertImageExportBudget(items)
   const { PDFDocument } = await import('pdf-lib')
   const document = await PDFDocument.create()
 

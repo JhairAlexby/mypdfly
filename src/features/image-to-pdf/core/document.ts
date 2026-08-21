@@ -31,6 +31,8 @@ export const IMAGE_EXTENSIONS = [
 export const MAX_IMAGE_COUNT = 50
 export const MAX_IMAGE_SIZE_BYTES = 25 * 1024 * 1024
 export const MAX_TOTAL_IMAGE_SIZE_BYTES = 100 * 1024 * 1024
+export const MAX_IMAGE_PIXELS = 40_000_000
+export const MAX_TOTAL_IMAGE_PIXELS = 100_000_000
 
 export type ImageMimeType = (typeof IMAGE_MIME_TYPES)[number]
 
@@ -50,8 +52,10 @@ export type ImageValidationCode =
   | 'unsupported-format'
   | 'mime-extension-mismatch'
   | 'file-too-large'
+  | 'image-too-many-pixels'
   | 'too-many-files'
   | 'total-size-too-large'
+  | 'total-pixels-too-large'
   | 'duplicate-file'
 
 export type ImageValidationResult =
@@ -66,6 +70,9 @@ export type ImageValidationContext = {
   readonly existingFiles?: readonly File[]
   readonly existingCount?: number
   readonly existingTotalBytes?: number
+  readonly existingTotalPixels?: number
+  readonly height?: number
+  readonly width?: number
 }
 
 const extensionFromName = (name: string) => {
@@ -86,6 +93,14 @@ const normalizeMime = (mimeType: string) =>
 
 const formatMegabytes = (bytes: number) =>
   `${Math.round(bytes / (1024 * 1024))} MB`
+
+const formatMegapixels = (pixels: number) =>
+  `${Math.round(pixels / 1_000_000)} MP`
+
+export const getImagePixelCount = (width: number, height: number) =>
+  Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+    ? width * height
+    : 0
 
 export const getImageMimeType = (file: File): ImageMimeType | null => {
   const declaredMimeType = normalizeMime(file.type)
@@ -148,6 +163,18 @@ export const validateImageFile = (
     }
   }
 
+  const imagePixels =
+    context.width !== undefined && context.height !== undefined
+      ? getImagePixelCount(context.width, context.height)
+      : 0
+  if (imagePixels > MAX_IMAGE_PIXELS) {
+    return {
+      code: 'image-too-many-pixels',
+      message: `Cada imagen puede tener como máximo ${formatMegapixels(MAX_IMAGE_PIXELS)}.`,
+      valid: false,
+    }
+  }
+
   const existingCount = context.existingCount ?? context.existingFiles?.length ?? 0
   if (existingCount >= MAX_IMAGE_COUNT) {
     return {
@@ -162,6 +189,18 @@ export const validateImageFile = (
     return {
       code: 'total-size-too-large',
       message: `El documento completo no puede superar ${formatMegabytes(MAX_TOTAL_IMAGE_SIZE_BYTES)}.`,
+      valid: false,
+    }
+  }
+
+  const existingTotalPixels = context.existingTotalPixels ?? 0
+  if (
+    imagePixels > 0 &&
+    existingTotalPixels + imagePixels > MAX_TOTAL_IMAGE_PIXELS
+  ) {
+    return {
+      code: 'total-pixels-too-large',
+      message: `El documento completo no puede superar ${formatMegapixels(MAX_TOTAL_IMAGE_PIXELS)}.`,
       valid: false,
     }
   }

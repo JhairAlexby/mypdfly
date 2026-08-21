@@ -7,13 +7,14 @@ export type ModernImageFormat = 'avif' | 'webp'
 
 export type ModernImageCodecOptions = {
   readonly format: ModernImageFormat
-  readonly mode: 'compress' | 'inspect'
+  readonly mode: 'compress' | 'decode' | 'inspect'
   readonly quality: number
 }
 
 export type ModernImageCodecResult = {
   readonly height: number
   readonly output?: ArrayBuffer
+  readonly pixels?: ArrayBuffer
   readonly width: number
 }
 

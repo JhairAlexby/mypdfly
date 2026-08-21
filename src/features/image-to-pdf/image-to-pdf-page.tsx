@@ -42,7 +42,10 @@ import {
   MAX_IMAGE_COUNT,
   MAX_IMAGE_SIZE_BYTES,
   MAX_TOTAL_IMAGE_SIZE_BYTES,
+  MAX_IMAGE_PIXELS,
+  MAX_TOTAL_IMAGE_PIXELS,
   applyImageFilterToAll,
+  getImagePixelCount,
   moveImage,
   removeImage,
   rotateImage,
@@ -78,59 +81,37 @@ import {
   scaleScannerCorners,
 } from './core/scanner/geometry'
 import { renderPerspectiveCanvas } from './core/scanner/perspective'
+import { decodeImageFile, type DecodedImageSource } from './core/image-source'
 import type { ImageScannerWorkerClient } from '../../../experiments/image-scanner/worker-client'
 
 type ImageToPdfPageProps = {
   readonly homeHref?: string
 }
 
-const readImageDimensions = async (file: File) => {
-  if (typeof createImageBitmap === 'function') {
-    const bitmap = await createImageBitmap(file, {
-      imageOrientation: 'from-image',
-    })
-    try {
-      return { height: bitmap.height, width: bitmap.width }
-    } finally {
-      bitmap.close()
-    }
-  }
-
-  const previewUrl = URL.createObjectURL(file)
-  try {
-    const image = new Image()
-    return await new Promise<{ height: number; width: number }>((resolve, reject) => {
-      image.onload = () => resolve({ height: image.naturalHeight, width: image.naturalWidth })
-      image.onerror = () => reject(new Error('La imagen no se pudo decodificar.'))
-      image.src = previewUrl
-    })
-  } finally {
-    URL.revokeObjectURL(previewUrl)
-  }
-}
-
 const createImageDocumentItem = async (file: File): Promise<ImageDocumentItem> => {
-  const previewUrl = URL.createObjectURL(file)
+  const image = await decodeImageFile(file)
+  const previewUrl = image.previewUrl ?? URL.createObjectURL(file)
   try {
-    const dimensions = await readImageDimensions(file)
     return {
       file,
       filter: 'original',
-      height: dimensions.height,
+      height: image.height,
       id: crypto.randomUUID(),
       previewUrl,
       rotation: 0,
-      scanner: createImageScannerState(dimensions.width, dimensions.height),
-      width: dimensions.width,
+      scanner: createImageScannerState(image.width, image.height),
+      width: image.width,
     }
   } catch (error) {
-    URL.revokeObjectURL(previewUrl)
+    if (!image.previewUrl) URL.revokeObjectURL(previewUrl)
     throw error
+  } finally {
+    image.close()
   }
 }
 
 const formatImageLimits = () =>
-  `Hasta ${MAX_IMAGE_COUNT} imágenes · ${formatFileSize(MAX_IMAGE_SIZE_BYTES)} por imagen · ${formatFileSize(MAX_TOTAL_IMAGE_SIZE_BYTES)} en total`
+  `Hasta ${MAX_IMAGE_COUNT} imágenes · ${formatFileSize(MAX_IMAGE_SIZE_BYTES)} por imagen · ${formatFileSize(MAX_TOTAL_IMAGE_SIZE_BYTES)} en total · ${Math.round(MAX_IMAGE_PIXELS / 1_000_000)} MP por imagen · ${Math.round(MAX_TOTAL_IMAGE_PIXELS / 1_000_000)} MP por documento`
 
 type ExportState =
   | { readonly status: 'idle'; readonly progress: 0 }
@@ -140,48 +121,8 @@ type ExportState =
 
 const initialExportState: ExportState = { progress: 0, status: 'idle' }
 
-type LoadedScannerImage = {
-  readonly close: () => void
-  readonly height: number
-  readonly source: CanvasImageSource
-  readonly width: number
-}
-
-const loadScannerImage = async (file: File): Promise<LoadedScannerImage> => {
-  if (typeof createImageBitmap === 'function') {
-    const bitmap = await createImageBitmap(file, {
-      imageOrientation: 'from-image',
-    })
-    return {
-      close: () => bitmap.close(),
-      height: bitmap.height,
-      source: bitmap,
-      width: bitmap.width,
-    }
-  }
-
-  const url = URL.createObjectURL(file)
-  const image = new Image()
-  try {
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve()
-      image.onerror = () => reject(new Error('La imagen no se pudo decodificar.'))
-      image.src = url
-    })
-    return {
-      close: () => URL.revokeObjectURL(url),
-      height: image.naturalHeight,
-      source: image,
-      width: image.naturalWidth,
-    }
-  } catch (error) {
-    URL.revokeObjectURL(url)
-    throw error
-  }
-}
-
 const createScannerInput = async (file: File) => {
-  const image = await loadScannerImage(file)
+  const image = await decodeImageFile(file)
   const maximumEdge = 1600
   const scale = Math.min(1, maximumEdge / Math.max(image.width, image.height))
   const canvas = document.createElement('canvas')
@@ -225,7 +166,7 @@ function ScannerPerspectivePreview({ item }: { readonly item: ImageDocumentItem 
 
   useEffect(() => {
     let disposed = false
-    let loadedImage: LoadedScannerImage | null = null
+    let loadedImage: DecodedImageSource | null = null
     let perspective: Awaited<ReturnType<typeof renderPerspectiveCanvas>> | null = null
 
     const clearCanvas = () => {
@@ -242,7 +183,7 @@ function ScannerPerspectivePreview({ item }: { readonly item: ImageDocumentItem 
       }
 
       try {
-        loadedImage = await loadScannerImage(item.file)
+        loadedImage = await decodeImageFile(item.file)
         perspective = await renderPerspectiveCanvas(
           loadedImage.source,
           loadedImage.width,
@@ -287,7 +228,10 @@ function ScannerPerspectivePreview({ item }: { readonly item: ImageDocumentItem 
           ref={canvasRef}
           aria-label={`Vista previa de perspectiva de ${item.file.name}`}
           className="max-h-72 max-w-full rounded-lg object-contain shadow-sm"
-          style={{ filter: getImageFilterCss(item.filter) }}
+          style={{
+            filter: getImageFilterCss(item.filter),
+            transform: `rotate(${item.rotation}deg)`,
+          }}
         />
       ) : (
         <p className="max-w-xs text-center text-xs leading-5 text-slate-500">
@@ -357,6 +301,10 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
     setIsReading(true)
     const nextItems = [...items]
     let nextTotalBytes = totalBytes
+    let nextTotalPixels = nextItems.reduce(
+      (total, item) => total + getImagePixelCount(item.width, item.height),
+      0,
+    )
     const nextErrors: string[] = []
 
     for (const file of selectedFiles) {
@@ -373,8 +321,22 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
 
       try {
         const item = await createImageDocumentItem(file)
+        const dimensionValidation = validateImageFile(file, {
+          existingCount: nextItems.length,
+          existingFiles: nextItems.map((candidate) => candidate.file),
+          existingTotalBytes: nextTotalBytes,
+          existingTotalPixels: nextTotalPixels,
+          height: item.height,
+          width: item.width,
+        })
+        if (!dimensionValidation.valid) {
+          URL.revokeObjectURL(item.previewUrl)
+          nextErrors.push(`${file.name}: ${dimensionValidation.message}`)
+          continue
+        }
         nextItems.push(item)
         nextTotalBytes += file.size
+        nextTotalPixels += getImagePixelCount(item.width, item.height)
       } catch {
         nextErrors.push(`${file.name}: la imagen no se pudo leer en este navegador.`)
       }

@@ -11,7 +11,10 @@ import {
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 
 import type { ImageDocumentItem } from '../src/features/image-to-pdf/core/document.ts'
-import { createImagesPdf } from '../src/features/image-to-pdf/core/pdf-export.ts'
+import {
+  createImagesPdf,
+  type PdfExportProgress,
+} from '../src/features/image-to-pdf/core/pdf-export.ts'
 import {
   createFullScannerCorners,
   createImageScannerState,
@@ -19,8 +22,11 @@ import {
 } from '../src/features/image-to-pdf/core/scanner/geometry.ts'
 import { renderPerspectiveCanvas } from '../src/features/image-to-pdf/core/scanner/perspective.ts'
 
+const createdDocumentCanvases: Array<{ height: number; width: number }> = []
+
 const createCanvasElement = (width = 1, height = 1) => {
   const canvas = createCanvas(width, height)
+  createdDocumentCanvases.push(canvas)
   Object.defineProperty(canvas, 'toBlob', {
     configurable: true,
     value: (callback: (blob: Blob | null) => void) => {
@@ -72,6 +78,27 @@ const createSourceFile = () => {
     type: 'image/png',
   })
 }
+
+const createTinySourceFile = () => {
+  const canvas = createCanvas(16, 16)
+  const context = canvas.getContext('2d')
+  context.fillStyle = '#0f766e'
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  return new File([canvas.toBuffer('image/png')], 'tiny.png', {
+    type: 'image/png',
+  })
+}
+
+const createBatchItem = (file: File, id: string): ImageDocumentItem => ({
+  file,
+  filter: 'original',
+  height: 16,
+  id,
+  previewUrl: `blob:${id}`,
+  rotation: 0,
+  scanner: createImageScannerState(16, 16),
+  width: 16,
+})
 
 test('genera un PDF con progreso monotónico y orientación A4 automática', async () => {
   const file = createSourceFile()
@@ -197,7 +224,7 @@ test('integra la perspectiva activa en el PDF con el tamaño real del recorte', 
   }
   const item: ImageDocumentItem = {
     file,
-    filter: 'original',
+    filter: 'grayscale',
     height: 140,
     id: 'perspective',
     previewUrl: 'blob:perspective',
@@ -221,5 +248,94 @@ test('integra la perspectiva activa en el PDF con el tamaño real del recorte', 
   const output = getPerspectiveOutputSize(corners)
   assert.equal(Math.round(viewport.width), Math.round(output.width * (72 / 96)))
   assert.equal(Math.round(viewport.height), Math.round(output.height * (72 / 96)))
+  const rendered = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
+  await page.render({
+    background: '#ffffff',
+    canvas: rendered as unknown as HTMLCanvasElement,
+    viewport,
+  }).promise
+  const pixels = rendered.getContext('2d').getImageData(
+    0,
+    0,
+    rendered.width,
+    rendered.height,
+  ).data
+  for (let index = 0; index < pixels.length; index += 4 * 31) {
+    const red = pixels[index]
+    const green = pixels[index + 1]
+    const blue = pixels[index + 2]
+    assert.ok(Math.max(red, green, blue) - Math.min(red, green, blue) <= 5)
+  }
   await loadingTask.destroy()
+})
+
+test('procesa un lote grande secuencialmente sin perder páginas ni progreso', async () => {
+  const file = createTinySourceFile()
+  const items = Array.from({ length: 50 }, (_, index) =>
+    createBatchItem(file, `batch-${index}`),
+  )
+  const progress: PdfExportProgress[] = []
+  createdDocumentCanvases.length = 0
+
+  const blob = await createImagesPdf(items, {
+    fitMode: 'contain',
+    marginMm: 0,
+    onProgress: (update) => progress.push(update),
+    pagePreset: 'image',
+  })
+
+  assert.ok(blob.size > 0)
+  assert.ok(
+    createdDocumentCanvases.length >= items.length &&
+    createdDocumentCanvases.every((canvas) => canvas.width === 1 && canvas.height === 1),
+  )
+  assert.equal(progress.at(-1)?.stage, 'complete')
+  assert.equal(progress.at(-1)?.progress, 1)
+  assert.deepEqual(
+    progress.map((update) => update.progress),
+    [...progress].map((update) => update.progress).sort((a, b) => a - b),
+  )
+
+  const loadingTask = getDocument({
+    data: new Uint8Array(await blob.arrayBuffer()),
+    disableWorker: true,
+  })
+  const pdf = await loadingTask.promise
+  assert.equal(pdf.numPages, 50)
+  await loadingTask.destroy()
+})
+
+test('cancela un lote grande entre páginas y no publica un PDF completo', async () => {
+  const file = createTinySourceFile()
+  const items = Array.from({ length: 50 }, (_, index) =>
+    createBatchItem(file, `cancel-batch-${index}`),
+  )
+  const controller = new AbortController()
+  const progress: PdfExportProgress[] = []
+  createdDocumentCanvases.length = 0
+
+  await assert.rejects(
+    createImagesPdf(items, {
+      fitMode: 'contain',
+      marginMm: 0,
+      onProgress: (update) => {
+        progress.push(update)
+        if (
+          update.stage === 'rendering' &&
+          update.currentPage === 4 &&
+          update.progress > 0
+        ) {
+          controller.abort()
+        }
+      },
+      pagePreset: 'image',
+      signal: controller.signal,
+    }),
+    (error: unknown) => error instanceof Error && error.name === 'ExportCancelledError',
+  )
+  assert.ok(progress.every((update) => update.stage !== 'complete'))
+  assert.ok(progress.length < items.length * 2)
+  assert.ok(
+    createdDocumentCanvases.every((canvas) => canvas.width === 1 && canvas.height === 1),
+  )
 })

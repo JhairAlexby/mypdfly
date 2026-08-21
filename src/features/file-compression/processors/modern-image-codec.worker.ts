@@ -31,6 +31,13 @@ const processImage = async ({
     if (options.mode === 'inspect') {
       return { height: image.height, width: image.width }
     }
+    if (options.mode === 'decode') {
+      return {
+        height: image.height,
+        pixels: new Uint8ClampedArray(image.data).buffer,
+        width: image.width,
+      }
+    }
 
     const output = await encode(image, {
       method: 4,
@@ -51,6 +58,13 @@ const processImage = async ({
   if (options.mode === 'inspect') {
     return { height: image.height, width: image.width }
   }
+  if (options.mode === 'decode') {
+    return {
+      height: image.height,
+      pixels: new Uint8ClampedArray(image.data).buffer,
+      width: image.width,
+    }
+  }
 
   const output = await encode(image, {
     quality: options.quality,
@@ -66,7 +80,9 @@ const processImage = async ({
 workerScope.onmessage = (event) => {
   void processImage(event.data).then(
     (result) => {
-      const transfer = result.output ? [result.output] : undefined
+      const transfer: ArrayBuffer[] = []
+      if (result.output) transfer.push(result.output)
+      if (result.pixels) transfer.push(result.pixels)
       workerScope.postMessage({ result }, transfer)
     },
     (error: unknown) =>

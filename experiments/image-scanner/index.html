@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Spike local de OpenCV.js para detección, perspectiva y filtro de documentos."
+    />
+    <title>mypdfly · Spike OpenCV.js</title>
+  </head>
+  <body>
+    <main>
+      <header class="hero">
+        <p class="eyebrow">Experimento aislado · No forma parte de producción</p>
+        <h1>OpenCV.js local para imágenes → PDF</h1>
+        <p>
+          Valida detección de documento, perspectiva, filtro de limpieza,
+          memoria y cancelación dentro de un Web Worker.
+        </p>
+      </header>
+
+      <section class="controls" aria-label="Controles del laboratorio">
+        <label class="file-control">
+          <span>Elegir imagen local</span>
+          <input id="image-input" type="file" accept="image/jpeg,image/png,image/webp,image/avif" />
+        </label>
+        <button id="process-current" type="button">Procesar imagen</button>
+        <button id="run-suite" type="button" class="primary">Ejecutar suite completa</button>
+        <button id="cancel-processing" type="button">Cancelar</button>
+        <button id="reset-fixture" type="button">Restaurar fixture</button>
+      </section>
+
+      <section class="status-card" aria-live="polite">
+        <p id="status" data-state="idle">Laboratorio listo.</p>
+        <div id="summary">Fixture sintético reproducible listo.</div>
+      </section>
+
+      <section class="canvases" aria-label="Comparación visual">
+        <article>
+          <h2>Origen y detección</h2>
+          <div class="canvas-frame">
+            <canvas id="source-canvas"></canvas>
+          </div>
+        </article>
+        <article>
+          <h2>Perspectiva + Documento limpio</h2>
+          <div class="canvas-frame result-frame">
+            <canvas id="result-canvas" width="1" height="1"></canvas>
+          </div>
+        </article>
+      </section>
+
+      <section class="report-card">
+        <h2>Reporte medido en este navegador</h2>
+        <pre id="report">Ejecuta la suite para generar resultados.</pre>
+      </section>
+    </main>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>

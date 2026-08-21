@@ -63,6 +63,9 @@ importers:
       '@napi-rs/canvas':
         specifier: ^1.0.6
         version: 1.0.6
+      '@opencvjs/worker':
+        specifier: 5.0.0-release.2
+        version: 5.0.0-release.2
       '@tailwindcss/vite':
         specifier: ^4.3.3
         version: 4.3.3(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12))
@@ -599,6 +602,12 @@ packages:
   '@nodelib/fs.walk@1.2.8':
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
+
+  '@opencvjs/types@5.0.0-release.2':
+    resolution: {integrity: sha512-f0ufjw6QDVKyR/I6gxc14V6xDnS/FD1cIwTrwUorPQDd8Rn1SBssUTo+OE92V2jg+eynDjGev8ud2pnLaUvVww==}
+
+  '@opencvjs/worker@5.0.0-release.2':
+    resolution: {integrity: sha512-HaNLZi1eDgIKNySOUuLygtyW1US7yJVVpqDtYKmInsenpBJmQTMSWkenEmW4KHdeGX+R7L2T04vL/J28jwHxog==}
 
   '@oxc-project/types@0.144.0':
     resolution: {integrity: sha512-nuhZIOLuI6TFQ32I/WnUx+SCPY7SdSKwgnFHydAuoS1+Z4BRcaP+RRJmGzl9lw+0OFF7UmaESf7KQRXaNLHypg==}
@@ -3670,6 +3679,12 @@ snapshots:
     dependencies:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.1
+
+  '@opencvjs/types@5.0.0-release.2': {}
+
+  '@opencvjs/worker@5.0.0-release.2':
+    dependencies:
+      '@opencvjs/types': 5.0.0-release.2
 
   '@oxc-project/types@0.144.0': {}
 

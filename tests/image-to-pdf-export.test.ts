@@ -11,6 +11,7 @@ import {
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 
 import type { ImageDocumentItem } from '../src/features/image-to-pdf/core/document.ts'
+import type { ImageFilter } from '../src/features/image-to-pdf/core/image-filters.ts'
 import {
   createImagesPdf,
   type PdfExportProgress,
@@ -157,6 +158,74 @@ test('genera un PDF con progreso monotónico y orientación A4 automática', asy
   assert.ok(centerPixel[0] < 80 && centerPixel[1] < 80 && centerPixel[2] < 80)
   assert.ok(marginPixel[0] > 240 && marginPixel[1] > 240 && marginPixel[2] > 240)
   assert.ok(Math.max(...filteredPixel.slice(0, 3)) - Math.min(...filteredPixel.slice(0, 3)) <= 3)
+
+  await loadingTask.destroy()
+})
+
+test('conserva los cinco filtros seleccionados dentro del PDF generado', async () => {
+  const file = createSourceFile()
+  const filters = [
+    'original',
+    'natural',
+    'clean-document',
+    'grayscale',
+    'black-and-white',
+  ] as const satisfies readonly ImageFilter[]
+  const items = filters.map((filter): ImageDocumentItem => ({
+    file,
+    filter,
+    height: 140,
+    id: `filter-${filter}`,
+    previewUrl: `blob:${filter}`,
+    rotation: 0,
+    scanner: createImageScannerState(260, 140),
+    width: 260,
+  }))
+
+  const blob = await createImagesPdf(items, {
+    fitMode: 'stretch',
+    marginMm: 0,
+    pagePreset: 'image',
+  })
+  const loadingTask = getDocument({
+    data: new Uint8Array(await blob.arrayBuffer()),
+    disableWorker: true,
+  })
+  const pdf = await loadingTask.promise
+  assert.equal(pdf.numPages, filters.length)
+
+  const samples: number[][] = []
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber)
+    const viewport = page.getViewport({ scale: 4 / 3 })
+    const rendered = createCanvas(
+      Math.ceil(viewport.width),
+      Math.ceil(viewport.height),
+    )
+    await page.render({
+      background: '#ffffff',
+      canvas: rendered as unknown as HTMLCanvasElement,
+      viewport,
+    }).promise
+    samples.push(
+      Array.from(
+        rendered.getContext('2d').getImageData(40, 40, 1, 1).data.slice(0, 3),
+      ),
+    )
+  }
+
+  const [original, natural, cleanDocument, grayscale, blackAndWhite] = samples
+  const channelSpread = (sample: readonly number[]) =>
+    Math.max(...sample) - Math.min(...sample)
+
+  assert.ok(channelSpread(original) > 100)
+  assert.ok(channelSpread(natural) > 100)
+  assert.notDeepEqual(natural, original)
+  assert.ok(channelSpread(cleanDocument) <= 5)
+  assert.ok(channelSpread(grayscale) <= 5)
+  assert.ok(channelSpread(blackAndWhite) <= 5)
+  assert.notDeepEqual(cleanDocument, grayscale)
+  assert.notDeepEqual(blackAndWhite, grayscale)
 
   await loadingTask.destroy()
 })

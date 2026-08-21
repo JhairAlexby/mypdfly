@@ -25,8 +25,10 @@ import {
   isPdfExportCancelled,
 } from '../src/features/image-to-pdf/core/pdf-export.ts'
 import {
+  applyImageFilterToPixels,
   getImageFilterCss,
   IMAGE_FILTERS,
+  type ImageFilter,
 } from '../src/features/image-to-pdf/core/image-filters.ts'
 import { createImageScannerState } from '../src/features/image-to-pdf/core/scanner/geometry.ts'
 
@@ -164,6 +166,43 @@ test('expone los cinco presets de filtro con una definición reutilizable para p
   assert.notEqual(getImageFilterCss('natural'), getImageFilterCss('original'))
   assert.notEqual(getImageFilterCss('clean-document'), getImageFilterCss('grayscale'))
   assert.notEqual(getImageFilterCss('black-and-white'), getImageFilterCss('grayscale'))
+})
+
+test('aplica cada preset directamente a píxeles y conserva el canal alfa', () => {
+  const source = new Uint8ClampedArray([
+    220, 80, 40, 128,
+    30, 170, 240, 64,
+  ])
+  const apply = (filter: ImageFilter) => {
+    const pixels = new Uint8ClampedArray(source)
+    assert.equal(applyImageFilterToPixels(pixels, filter), pixels)
+    assert.equal(pixels[3], source[3])
+    assert.equal(pixels[7], source[7])
+    return pixels
+  }
+
+  const original = apply('original')
+  const natural = apply('natural')
+  const grayscale = apply('grayscale')
+  const cleanDocument = apply('clean-document')
+  const blackAndWhite = apply('black-and-white')
+
+  assert.deepEqual(original, source)
+  assert.notDeepEqual(natural, source)
+  assert.ok(natural[0] - natural[2] > source[0] - source[2])
+
+  for (const pixels of [grayscale, cleanDocument, blackAndWhite]) {
+    assert.equal(pixels[0], pixels[1])
+    assert.equal(pixels[1], pixels[2])
+    assert.equal(pixels[4], pixels[5])
+    assert.equal(pixels[5], pixels[6])
+  }
+
+  const grayscaleContrast = Math.abs(grayscale[4] - grayscale[0])
+  const cleanDocumentContrast = Math.abs(cleanDocument[4] - cleanDocument[0])
+  const blackAndWhiteContrast = Math.abs(blackAndWhite[4] - blackAndWhite[0])
+  assert.ok(cleanDocumentContrast > grayscaleContrast)
+  assert.ok(blackAndWhiteContrast > cleanDocumentContrast)
 })
 
 test('edita esquinas sin mutar páginas y solo activa la perspectiva al confirmarla', () => {

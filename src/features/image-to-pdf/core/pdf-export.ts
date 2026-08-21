@@ -8,7 +8,7 @@ import {
   MAX_TOTAL_IMAGE_PIXELS,
   type ImageDocumentItem,
 } from './document'
-import { getImageFilterCss } from './image-filters'
+import { applyImageFilterToPixels } from './image-filters'
 import { decodeImageFile } from './image-source'
 import { getPerspectiveOutputSize, isScannerQuadrilateralValid } from './scanner/geometry'
 import { renderPerspectiveCanvas } from './scanner/perspective'
@@ -55,6 +55,7 @@ const MAX_RENDER_PIXELS = 8_000_000
 const PREFERRED_RENDER_SCALE = 2
 const RENDER_PROGRESS_MAX = 0.9
 const SAVE_PROGRESS = 0.95
+const FILTER_ROWS_PER_CHUNK = 256
 
 const PAPER_SIZES: Record<Exclude<PdfPagePreset, 'image'>, { widthPt: number; heightPt: number }> = {
   a4: { heightPt: 841.89, widthPt: 595.28 },
@@ -176,6 +177,26 @@ const canvasToPng = (canvas: HTMLCanvasElement) =>
     }, 'image/png')
   })
 
+const applyFilterToCanvas = async (
+  context: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  filter: ImageDocumentItem['filter'],
+  signal?: AbortSignal,
+) => {
+  for (let y = 0; y < canvas.height; y += FILTER_ROWS_PER_CHUNK) {
+    throwIfExportAborted(signal)
+    const height = Math.min(FILTER_ROWS_PER_CHUNK, canvas.height - y)
+    const imageData = context.getImageData(0, y, canvas.width, height)
+    applyImageFilterToPixels(imageData.data, filter)
+    context.putImageData(imageData, 0, y)
+
+    if (y + height < canvas.height) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
+  }
+  throwIfExportAborted(signal)
+}
+
 const renderImagePage = async (
   item: ImageDocumentItem,
   layout: PdfPageLayout,
@@ -220,7 +241,6 @@ const renderImagePage = async (
     context.fillStyle = '#ffffff'
     context.fillRect(0, 0, canvas.width, canvas.height)
     context.save()
-    context.filter = getImageFilterCss(item.filter)
     context.translate(
       (drawRect.xPt + drawRect.widthPt / 2) * renderScale,
       (drawRect.yPt + drawRect.heightPt / 2) * renderScale,
@@ -241,6 +261,9 @@ const renderImagePage = async (
     )
     context.restore()
     throwIfExportAborted(signal)
+    if (item.filter !== 'original') {
+      await applyFilterToCanvas(context, canvas, item.filter, signal)
+    }
     return await canvasToPng(canvas)
   } finally {
     if (perspective) {

@@ -644,7 +644,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
   }
 
   return (
-    <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+    <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <a
           href={homeHref}
@@ -659,7 +659,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
         </span>
       </div>
 
-      <Card className="gap-0 overflow-hidden rounded-3xl border-0 bg-white py-0 shadow-[0_28px_80px_rgba(39,45,76,0.12)] ring-1 ring-slate-200/90">
+      <Card className="w-full gap-0 overflow-hidden rounded-3xl border-0 bg-white py-0 shadow-[0_28px_80px_rgba(39,45,76,0.12)] ring-1 ring-slate-200/90">
         <CardHeader className="border-b border-slate-200 px-5 py-5 sm:px-7 sm:py-6">
           <div className="flex items-start gap-3">
             <div className="grid size-11 shrink-0 place-items-center rounded-2xl bg-[#fff0ed] text-[#ed4c38]">
@@ -687,7 +687,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
             aria-label="Seleccionar imágenes para convertir a PDF"
           />
 
-          {items.length === 0 ? (
+          {items.length === 0 && (
             <div
               data-testid="image-upload-zone"
               role="button"
@@ -749,25 +749,6 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                 </p>
               </div>
             </div>
-          ) : (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3">
-              <div>
-                <p className="text-sm font-semibold text-slate-950">Páginas del documento</p>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  Arrastra una tarjeta o utiliza las flechas para ordenar.
-                </p>
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                className="rounded-xl bg-white"
-                onClick={openFilePicker}
-                disabled={isReading || isBusy}
-              >
-                <ImagePlus data-icon="inline-start" aria-hidden="true" />
-                Añadir imágenes
-              </Button>
-            </div>
           )}
 
           {errors.length > 0 && (
@@ -785,23 +766,37 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
 
           {items.length > 0 && (
             <section aria-labelledby="image-pages-title">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <h2 id="image-pages-title" className="text-base font-semibold text-slate-950">
                     {items.length} {items.length === 1 ? 'página' : 'páginas'}
                   </h2>
                   <p className="mt-0.5 text-xs text-slate-500">
-                    {formatFileSize(totalBytes)} · orden actual del PDF
+                    {formatFileSize(totalBytes)} · arrastra o usa las flechas para ordenar
                   </p>
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="rounded-xl text-slate-500 hover:text-red-700"
-                  onClick={clearDocument}
-                >
-                  Vaciar documento
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="rounded-lg bg-white"
+                    onClick={openFilePicker}
+                    disabled={isReading || isBusy}
+                  >
+                    <ImagePlus data-icon="inline-start" aria-hidden="true" />
+                    Añadir
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="rounded-lg text-slate-500 hover:text-red-700"
+                    onClick={clearDocument}
+                  >
+                    Vaciar
+                  </Button>
+                </div>
               </div>
 
               <div
@@ -909,25 +904,6 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                           <Trash2 aria-hidden="true" />
                         </Button>
                       </div>
-                      <label className="grid gap-1.5 text-xs font-medium text-slate-600">
-                        Filtro
-                        <select
-                          aria-label={`Filtro de ${item.file.name}`}
-                          className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm font-normal text-slate-900 outline-none focus:border-slate-400 focus:ring-3 focus:ring-slate-200"
-                          value={item.filter}
-                          onChange={(event) => {
-                            setActiveFilterItemId(item.id)
-                            updateItemFilter(item.id, event.target.value as ImageFilter)
-                          }}
-                          disabled={isBusy}
-                        >
-                          {IMAGE_FILTERS.map((definition) => (
-                            <option key={definition.id} value={definition.id}>
-                              {definition.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
                     </div>
                   </article>
                 ))}
@@ -1356,18 +1332,8 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
           )}
         </CardContent>
 
-        <CardFooter className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50/70 px-5 py-4 sm:px-7">
-          <p className="flex items-center gap-2 text-xs text-slate-500">
-            {items.length > 0 ? (
-              <CheckCircle2 className="size-4 text-emerald-600" aria-hidden="true" />
-            ) : (
-              <ShieldCheck className="size-4 text-emerald-600" aria-hidden="true" />
-            )}
-            {items.length > 0
-              ? 'Las páginas permanecen en el orden que elegiste.'
-              : 'Tus imágenes permanecen en tu dispositivo.'}
-          </p>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+        {items.length > 0 && (
+          <CardFooter className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-200 bg-slate-50/70 px-5 py-4 sm:px-7">
             {isExporting && (
               <Button
                 type="button"
@@ -1381,7 +1347,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
             <Button
               type="button"
               className="rounded-xl bg-slate-950 px-4 text-white shadow-lg shadow-slate-900/15 hover:bg-slate-800"
-              disabled={!items.length || isBusy}
+              disabled={isBusy}
               onClick={() => void exportPdf()}
             >
               {isExporting ? (
@@ -1391,8 +1357,8 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
               )}
               {isExporting ? 'Generando PDF…' : 'Generar y descargar PDF'}
             </Button>
-          </div>
-        </CardFooter>
+          </CardFooter>
+        )}
       </Card>
     </main>
   )

@@ -12,6 +12,12 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 
 import type { ImageDocumentItem } from '../src/features/image-to-pdf/core/document.ts'
 import { createImagesPdf } from '../src/features/image-to-pdf/core/pdf-export.ts'
+import {
+  createFullScannerCorners,
+  createImageScannerState,
+  getPerspectiveOutputSize,
+} from '../src/features/image-to-pdf/core/scanner/geometry.ts'
+import { renderPerspectiveCanvas } from '../src/features/image-to-pdf/core/scanner/perspective.ts'
 
 const createCanvasElement = (width = 1, height = 1) => {
   const canvas = createCanvas(width, height)
@@ -76,6 +82,7 @@ test('genera un PDF con progreso monotónico y orientación A4 automática', asy
     id: 'sample',
     previewUrl: 'blob:sample',
     rotation: 0,
+    scanner: createImageScannerState(260, 140),
     width: 260,
   }
   const progress: number[] = []
@@ -124,5 +131,95 @@ test('genera un PDF con progreso monotónico y orientación A4 automática', asy
   assert.ok(marginPixel[0] > 240 && marginPixel[1] > 240 && marginPixel[2] > 240)
   assert.ok(Math.max(...filteredPixel.slice(0, 3)) - Math.min(...filteredPixel.slice(0, 3)) <= 3)
 
+  await loadingTask.destroy()
+})
+
+test('renderiza una perspectiva local a partir de esquinas manuales', async () => {
+  const source = createCanvas(120, 80)
+  const sourceContext = source.getContext('2d')
+  sourceContext.fillStyle = '#1d4ed8'
+  sourceContext.fillRect(0, 0, source.width, source.height)
+  const corners = [
+    { x: 12, y: 8 },
+    { x: 108, y: 10 },
+    { x: 114, y: 72 },
+    { x: 6, y: 70 },
+  ] as const
+
+  const perspective = await renderPerspectiveCanvas(
+    source,
+    source.width,
+    source.height,
+    corners,
+  )
+  const expected = getPerspectiveOutputSize(corners)
+  assert.equal(perspective.logicalWidth, expected.width)
+  assert.equal(perspective.logicalHeight, expected.height)
+  assert.ok(perspective.canvas.width > 0)
+  assert.ok(perspective.canvas.height > 0)
+
+  const center = perspective.canvas
+    .getContext('2d')
+    .getImageData(
+      Math.floor(perspective.canvas.width / 2),
+      Math.floor(perspective.canvas.height / 2),
+      1,
+      1,
+    ).data
+  assert.ok(center[2] > 150)
+  perspective.canvas.width = 1
+  perspective.canvas.height = 1
+
+  const identity = await renderPerspectiveCanvas(
+    source,
+    source.width,
+    source.height,
+    createFullScannerCorners(source.width, source.height),
+  )
+  assert.ok(identity.canvas.width >= 79)
+  assert.ok(identity.canvas.height >= 49)
+  identity.canvas.width = 1
+  identity.canvas.height = 1
+})
+
+test('integra la perspectiva activa en el PDF con el tamaño real del recorte', async () => {
+  const file = createSourceFile()
+  const corners = [
+    { x: 10, y: 10 },
+    { x: 232, y: 7 },
+    { x: 240, y: 126 },
+    { x: 5, y: 120 },
+  ] as const
+  const scanner = {
+    ...createImageScannerState(260, 140),
+    active: true,
+    corners,
+  }
+  const item: ImageDocumentItem = {
+    file,
+    filter: 'original',
+    height: 140,
+    id: 'perspective',
+    previewUrl: 'blob:perspective',
+    rotation: 0,
+    scanner,
+    width: 260,
+  }
+
+  const blob = await createImagesPdf([item], {
+    fitMode: 'contain',
+    marginMm: 0,
+    pagePreset: 'image',
+  })
+  const loadingTask = getDocument({
+    data: new Uint8Array(await blob.arrayBuffer()),
+    disableWorker: true,
+  })
+  const pdf = await loadingTask.promise
+  const page = await pdf.getPage(1)
+  const viewport = page.getViewport({ scale: 1 })
+  const output = getPerspectiveOutputSize(corners)
+  assert.equal(Math.round(viewport.width), Math.round(output.width * (72 / 96)))
+  assert.equal(Math.round(viewport.height), Math.round(output.height * (72 / 96)))
   await loadingTask.destroy()
 })

@@ -1,16 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, DragEvent, KeyboardEvent } from 'react'
+import type {
+  ChangeEvent,
+  DragEvent,
+  KeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+} from 'react'
 import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
   CheckCircle2,
+  Crosshair,
   FileDown,
   FileImage,
   GripVertical,
   ImagePlus,
   LoaderCircle,
   RotateCw,
+  ScanLine,
   Settings2,
   ShieldCheck,
   Trash2,
@@ -35,11 +42,13 @@ import {
   MAX_IMAGE_COUNT,
   MAX_IMAGE_SIZE_BYTES,
   MAX_TOTAL_IMAGE_SIZE_BYTES,
-  moveImage,
   applyImageFilterToAll,
+  moveImage,
   removeImage,
   rotateImage,
   setImageFilter,
+  setScannerCorners,
+  setScannerState,
   type ImageDocumentItem,
   validateImageFile,
 } from './core/document'
@@ -57,6 +66,19 @@ import {
   type PdfMarginMm,
   type PdfPagePreset,
 } from './core/pdf-export'
+import type {
+  ImageScannerState,
+  ScannerCorners,
+  ScannerWorkerStage,
+} from './core/scanner/types'
+import {
+  clampScannerPoint,
+  createImageScannerState,
+  isScannerQuadrilateralValid,
+  scaleScannerCorners,
+} from './core/scanner/geometry'
+import { renderPerspectiveCanvas } from './core/scanner/perspective'
+import type { ImageScannerWorkerClient } from '../../../experiments/image-scanner/worker-client'
 
 type ImageToPdfPageProps = {
   readonly homeHref?: string
@@ -98,6 +120,7 @@ const createImageDocumentItem = async (file: File): Promise<ImageDocumentItem> =
       id: crypto.randomUUID(),
       previewUrl,
       rotation: 0,
+      scanner: createImageScannerState(dimensions.width, dimensions.height),
       width: dimensions.width,
     }
   } catch (error) {
@@ -117,6 +140,164 @@ type ExportState =
 
 const initialExportState: ExportState = { progress: 0, status: 'idle' }
 
+type LoadedScannerImage = {
+  readonly close: () => void
+  readonly height: number
+  readonly source: CanvasImageSource
+  readonly width: number
+}
+
+const loadScannerImage = async (file: File): Promise<LoadedScannerImage> => {
+  if (typeof createImageBitmap === 'function') {
+    const bitmap = await createImageBitmap(file, {
+      imageOrientation: 'from-image',
+    })
+    return {
+      close: () => bitmap.close(),
+      height: bitmap.height,
+      source: bitmap,
+      width: bitmap.width,
+    }
+  }
+
+  const url = URL.createObjectURL(file)
+  const image = new Image()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve()
+      image.onerror = () => reject(new Error('La imagen no se pudo decodificar.'))
+      image.src = url
+    })
+    return {
+      close: () => URL.revokeObjectURL(url),
+      height: image.naturalHeight,
+      source: image,
+      width: image.naturalWidth,
+    }
+  } catch (error) {
+    URL.revokeObjectURL(url)
+    throw error
+  }
+}
+
+const createScannerInput = async (file: File) => {
+  const image = await loadScannerImage(file)
+  const maximumEdge = 1600
+  const scale = Math.min(1, maximumEdge / Math.max(image.width, image.height))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(image.width * scale))
+  canvas.height = Math.max(1, Math.round(image.height * scale))
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+
+  if (!context) {
+    image.close()
+    throw new Error('No se pudo preparar la imagen para detectar el documento.')
+  }
+
+  try {
+    context.drawImage(image.source, 0, 0, canvas.width, canvas.height)
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height)
+    return {
+      height: canvas.height,
+      input: {
+        height: canvas.height,
+        pixels: new Uint8ClampedArray(pixels.data).buffer,
+        width: canvas.width,
+      },
+      width: canvas.width,
+    }
+  } finally {
+    canvas.width = 1
+    canvas.height = 1
+    image.close()
+  }
+}
+
+const scannerCornerLabels = [
+  'Esquina superior izquierda',
+  'Esquina superior derecha',
+  'Esquina inferior derecha',
+  'Esquina inferior izquierda',
+] as const
+
+function ScannerPerspectivePreview({ item }: { readonly item: ImageDocumentItem }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    let disposed = false
+    let loadedImage: LoadedScannerImage | null = null
+    let perspective: Awaited<ReturnType<typeof renderPerspectiveCanvas>> | null = null
+
+    const clearCanvas = () => {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      canvas.width = 1
+      canvas.height = 1
+    }
+
+    const render = async () => {
+      if (!item.scanner.active) {
+        clearCanvas()
+        return
+      }
+
+      try {
+        loadedImage = await loadScannerImage(item.file)
+        perspective = await renderPerspectiveCanvas(
+          loadedImage.source,
+          loadedImage.width,
+          loadedImage.height,
+          item.scanner.corners,
+        )
+        if (disposed) return
+
+        const canvas = canvasRef.current
+        const context = canvas?.getContext('2d')
+        if (!canvas || !context || !perspective) return
+        canvas.width = perspective.canvas.width
+        canvas.height = perspective.canvas.height
+        context.drawImage(perspective.canvas, 0, 0)
+      } catch {
+        clearCanvas()
+      } finally {
+        if (perspective) {
+          perspective.canvas.width = 1
+          perspective.canvas.height = 1
+        }
+        loadedImage?.close()
+      }
+    }
+
+    void render()
+    return () => {
+      disposed = true
+      clearCanvas()
+      if (perspective) {
+        perspective.canvas.width = 1
+        perspective.canvas.height = 1
+      }
+      loadedImage?.close()
+    }
+  }, [item.file, item.scanner.active, item.scanner.corners])
+
+  return (
+    <div className="flex min-h-56 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white p-4 sm:min-h-72">
+      {item.scanner.active ? (
+        <canvas
+          ref={canvasRef}
+          aria-label={`Vista previa de perspectiva de ${item.file.name}`}
+          className="max-h-72 max-w-full rounded-lg object-contain shadow-sm"
+          style={{ filter: getImageFilterCss(item.filter) }}
+        />
+      ) : (
+        <p className="max-w-xs text-center text-xs leading-5 text-slate-500">
+          Ajusta las cuatro esquinas y pulsa “Aplicar perspectiva” para ver el resultado enderezado.
+        </p>
+      )}
+    </div>
+  )
+}
+
 export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const itemsRef = useRef<readonly ImageDocumentItem[]>([])
@@ -132,7 +313,14 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
   const [fitMode, setFitMode] = useState<PdfFitMode>('contain')
   const [exportState, setExportState] = useState<ExportState>(initialExportState)
   const [exportError, setExportError] = useState('')
+  const [activeScannerItemId, setActiveScannerItemId] = useState<string | null>(null)
+  const [scannerStatus, setScannerStatus] = useState<'idle' | 'detecting' | 'error'>('idle')
+  const [scannerStage, setScannerStage] = useState<ScannerWorkerStage | null>(null)
+  const [scannerMessage, setScannerMessage] = useState('')
+  const [draggingCornerIndex, setDraggingCornerIndex] = useState<number | null>(null)
   const exportControllerRef = useRef<AbortController | null>(null)
+  const scannerControllerRef = useRef<AbortController | null>(null)
+  const scannerClientRef = useRef<ImageScannerWorkerClient | null>(null)
 
   const totalBytes = useMemo(
     () => items.reduce((total, item) => total + item.file.size, 0),
@@ -141,6 +329,8 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
 
   const isExporting =
     exportState.status === 'running' || exportState.status === 'cancelling'
+  const isScanning = scannerStatus === 'detecting'
+  const isBusy = isExporting || isScanning
 
   useEffect(() => {
     itemsRef.current = items
@@ -149,18 +339,20 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
   useEffect(
     () => () => {
       exportControllerRef.current?.abort()
+      scannerControllerRef.current?.abort()
+      scannerClientRef.current?.dispose()
       itemsRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl))
     },
     [],
   )
 
   const openFilePicker = () => {
-    if (!isReading && !isExporting) inputRef.current?.click()
+    if (!isReading && !isBusy) inputRef.current?.click()
   }
 
   const addFiles = async (fileList: FileList | readonly File[]) => {
     const selectedFiles = Array.from(fileList)
-    if (!selectedFiles.length || isReading || isExporting) return
+    if (!selectedFiles.length || isReading || isBusy) return
 
     setIsReading(true)
     const nextItems = [...items]
@@ -212,7 +404,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
   }
 
   const removeItem = (id: string) => {
-    if (isExporting) return
+    if (isBusy) return
     const item = items.find((candidate) => candidate.id === id)
     if (!item) return
     URL.revokeObjectURL(item.previewUrl)
@@ -220,34 +412,36 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
   }
 
   const rotateItem = (id: string) => {
-    if (isExporting) return
+    if (isBusy) return
     setItems(
       items.map((item) => (item.id === id ? rotateImage(item) : item)),
     )
   }
 
   const moveItem = (id: string, direction: -1 | 1) => {
-    if (isExporting) return
+    if (isBusy) return
     const currentIndex = items.findIndex((item) => item.id === id)
     setItems(moveImage(items, currentIndex, currentIndex + direction))
   }
 
   const updateItemFilter = (id: string, filter: ImageFilter) => {
-    if (isExporting) return
+    if (isBusy) return
     setItems(setImageFilter(items, id, filter))
   }
 
   const activeFilterItem =
     items.find((item) => item.id === activeFilterItemId) ?? items[0]
   const activeFilter = activeFilterItem?.filter ?? 'original'
+  const activeScannerItem =
+    items.find((item) => item.id === activeScannerItemId) ?? items[0]
 
   const applyActiveFilterToAll = () => {
-    if (!activeFilterItem || isExporting) return
+    if (!activeFilterItem || isBusy) return
     setItems(applyImageFilterToAll(items, activeFilter))
   }
 
   const clearDocument = () => {
-    if (isExporting) return
+    if (isBusy) return
     items.forEach((item) => URL.revokeObjectURL(item.previewUrl))
     setItems([])
     setErrors([])
@@ -260,7 +454,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
 
   const handleDropOnItem = (event: DragEvent<HTMLElement>, targetId: string) => {
     event.preventDefault()
-    if (isExporting) return
+    if (isBusy) return
     if (!draggedId || draggedId === targetId) {
       setDraggedId(null)
       setDragOverId(null)
@@ -283,7 +477,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
   }
 
   const exportPdf = async () => {
-    if (!items.length || isExporting) return
+    if (!items.length || isBusy) return
 
     const controller = new AbortController()
     exportControllerRef.current = controller
@@ -333,6 +527,158 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
       return { ...currentState, status: 'cancelling' }
     })
     exportControllerRef.current?.abort()
+  }
+
+  const updateScannerState = (id: string, scanner: ImageScannerState) => {
+    setItems((currentItems) => setScannerState(currentItems, id, scanner))
+  }
+
+  const handleScannerPointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (!activeScannerItem || draggingCornerIndex === null || isBusy) return
+    const bounds = event.currentTarget.getBoundingClientRect()
+    if (!bounds.width || !bounds.height) return
+    const point = clampScannerPoint(
+      {
+        x: ((event.clientX - bounds.left) / bounds.width) * activeScannerItem.width,
+        y: ((event.clientY - bounds.top) / bounds.height) * activeScannerItem.height,
+      },
+      activeScannerItem.width,
+      activeScannerItem.height,
+    )
+    setItems((currentItems) => {
+      const item = currentItems.find((candidate) => candidate.id === activeScannerItem.id)
+      if (!item) return currentItems
+      const corners = item.scanner.corners.map((candidate, candidateIndex) =>
+        candidateIndex === draggingCornerIndex ? point : candidate,
+      ) as unknown as ScannerCorners
+      return setScannerCorners(currentItems, item.id, corners)
+    })
+  }
+
+  const handleScannerPointerUp = () => setDraggingCornerIndex(null)
+
+  const resetScanner = () => {
+    if (!activeScannerItem || isBusy) return
+    updateScannerState(
+      activeScannerItem.id,
+      createImageScannerState(activeScannerItem.width, activeScannerItem.height),
+    )
+    setScannerMessage('Esquinas restablecidas. Puedes ajustarlas manualmente.')
+    setScannerStatus('idle')
+    setScannerStage(null)
+  }
+
+  const toggleScannerPerspective = () => {
+    if (!activeScannerItem || isBusy) return
+    if (activeScannerItem.scanner.active) {
+      updateScannerState(activeScannerItem.id, {
+        ...activeScannerItem.scanner,
+        active: false,
+      })
+      setScannerMessage('Perspectiva quitada; el PDF usará la imagen original.')
+      return
+    }
+    if (!isScannerQuadrilateralValid(activeScannerItem.scanner.corners)) {
+      setScannerMessage('Las esquinas deben formar un cuadrilátero válido.')
+      setScannerStatus('error')
+      return
+    }
+    updateScannerState(activeScannerItem.id, {
+      ...activeScannerItem.scanner,
+      active: true,
+      detected: false,
+    })
+    setScannerStatus('idle')
+    setScannerMessage('Perspectiva aplicada a esta página.')
+  }
+
+  const cancelScannerDetection = () => {
+    if (!isScanning) return
+    scannerControllerRef.current?.abort()
+    scannerClientRef.current?.cancel()
+  }
+
+  const detectScannerDocument = async () => {
+    if (!activeScannerItem || isBusy) return
+
+    const itemId = activeScannerItem.id
+    const controller = new AbortController()
+    scannerControllerRef.current = controller
+    setScannerStatus('detecting')
+    setScannerStage('loading-opencv')
+    setScannerMessage('Preparando detección local…')
+
+    try {
+      const { ImageScannerWorkerClient, ScannerCancelledError } = await import(
+        '../../../experiments/image-scanner/worker-client'
+      )
+      const client = new ImageScannerWorkerClient()
+      scannerClientRef.current = client
+      const prepared = await createScannerInput(activeScannerItem.file)
+      if (controller.signal.aborted) throw new ScannerCancelledError()
+
+      const result = await client.process(
+        prepared.input,
+        { filter: 'document-clean' },
+        {
+          onStage: (stage) => {
+            setScannerStage(stage)
+            setScannerMessage(
+              {
+                'loading-opencv': 'Cargando el motor local…',
+                detecting: 'Buscando los bordes del documento…',
+                'correcting-perspective': 'Calculando la perspectiva…',
+                filtering: 'Preparando la vista escaneada…',
+              }[stage],
+            )
+          },
+          signal: controller.signal,
+        },
+      )
+      const corners = scaleScannerCorners(
+        result.detection.corners,
+        prepared.width,
+        prepared.height,
+        activeScannerItem.width,
+        activeScannerItem.height,
+      )
+      const detected = result.detection.detected && isScannerQuadrilateralValid(corners)
+      updateScannerState(itemId, {
+        active: detected,
+        confidence: result.detection.confidence,
+        corners,
+        detected,
+      })
+      setScannerStatus('idle')
+      setScannerStage(null)
+      setScannerMessage(
+        detected
+          ? `Documento detectado con ${Math.round(result.detection.confidence * 100)}% de confianza. Revisa las esquinas antes de exportar.`
+          : 'No se encontró un documento con suficiente confianza. Revisa las esquinas manualmente.',
+      )
+    } catch (error) {
+      const wasCancelled = error instanceof Error && error.name === 'ScannerCancelledError'
+      setScannerStage(null)
+      setScannerStatus(wasCancelled ? 'idle' : 'error')
+      setScannerMessage(
+        wasCancelled
+          ? 'Detección cancelada; las esquinas manuales se conservaron.'
+          : error instanceof Error
+            ? error.message
+            : 'La detección automática no está disponible en este navegador.',
+      )
+    } finally {
+      if (scannerClientRef.current) {
+        scannerClientRef.current.dispose()
+        scannerClientRef.current = null
+      }
+      if (scannerControllerRef.current === controller) {
+        scannerControllerRef.current = null
+      }
+      setScannerStatus((currentStatus) =>
+        currentStatus === 'detecting' ? 'idle' : currentStatus,
+      )
+    }
   }
 
   return (
@@ -454,7 +800,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                 variant="outline"
                 className="rounded-xl bg-white"
                 onClick={openFilePicker}
-                disabled={isReading || isExporting}
+                disabled={isReading || isBusy}
               >
                 <ImagePlus data-icon="inline-start" aria-hidden="true" />
                 Añadir imágenes
@@ -557,7 +903,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                             size="icon-sm"
                             className="rounded-lg text-slate-500 hover:text-slate-950"
                             onClick={() => moveItem(item.id, -1)}
-                            disabled={index === 0 || isExporting}
+                            disabled={index === 0 || isBusy}
                             aria-label={`Mover ${item.file.name} arriba`}
                             title="Mover arriba"
                           >
@@ -569,7 +915,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                             size="icon-sm"
                             className="rounded-lg text-slate-500 hover:text-slate-950"
                             onClick={() => moveItem(item.id, 1)}
-                            disabled={index === items.length - 1 || isExporting}
+                            disabled={index === items.length - 1 || isBusy}
                             aria-label={`Mover ${item.file.name} abajo`}
                             title="Mover abajo"
                           >
@@ -581,7 +927,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                             size="icon-sm"
                             className="rounded-lg text-slate-500 hover:text-slate-950"
                             onClick={() => rotateItem(item.id)}
-                            disabled={isExporting}
+                            disabled={isBusy}
                             aria-label={`Rotar ${item.file.name}`}
                             title="Rotar 90°"
                           >
@@ -594,7 +940,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                           size="icon-sm"
                           className="rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-700"
                           onClick={() => removeItem(item.id)}
-                          disabled={isExporting}
+                          disabled={isBusy}
                           aria-label={`Eliminar ${item.file.name}`}
                           title="Eliminar imagen"
                         >
@@ -611,7 +957,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                             setActiveFilterItemId(item.id)
                             updateItemFilter(item.id, event.target.value as ImageFilter)
                           }}
-                          disabled={isExporting}
+                          disabled={isBusy}
                         >
                           {IMAGE_FILTERS.map((definition) => (
                             <option key={definition.id} value={definition.id}>
@@ -656,7 +1002,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                       className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm font-normal text-slate-900 outline-none focus:border-slate-400 focus:ring-3 focus:ring-slate-200"
                       value={activeFilterItem.id}
                       onChange={(event) => setActiveFilterItemId(event.target.value)}
-                      disabled={isExporting}
+                      disabled={isBusy}
                     >
                       {items.map((item, index) => (
                         <option key={item.id} value={item.id}>
@@ -691,7 +1037,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                           className="rounded-lg"
                           aria-pressed={activeFilter === definition.id}
                           onClick={() => updateItemFilter(activeFilterItem.id, definition.id)}
-                          disabled={isExporting}
+                          disabled={isBusy}
                         >
                           {definition.label}
                         </Button>
@@ -706,10 +1052,221 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                     variant="outline"
                     className="w-full rounded-xl bg-white sm:w-auto sm:self-start"
                     onClick={applyActiveFilterToAll}
-                    disabled={isExporting || items.every((item) => item.filter === activeFilter)}
+                    disabled={isBusy || items.every((item) => item.filter === activeFilter)}
                   >
                     Aplicar a todas
                   </Button>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {items.length > 0 && activeScannerItem && (
+            <section
+              aria-labelledby="scanner-mode-title"
+              data-testid="scanner-mode"
+              className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5"
+            >
+              <div className="mb-4 flex items-start gap-3">
+                <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-white text-[#e84c38] shadow-sm ring-1 ring-slate-200">
+                  <ScanLine className="size-4" aria-hidden="true" />
+                </div>
+                <div>
+                  <h2 id="scanner-mode-title" className="text-sm font-semibold text-slate-950">
+                    Modo escáner
+                  </h2>
+                  <p className="mt-0.5 text-xs leading-5 text-slate-500">
+                    Ajusta las esquinas manualmente o usa detección local. La perspectiva se aplica solo al PDF.
+                  </p>
+                </div>
+              </div>
+
+              <label className="mb-4 grid max-w-sm gap-1.5 text-xs font-medium text-slate-600">
+                Página para escanear
+                <select
+                  aria-label="Página para escanear"
+                  className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm font-normal text-slate-900 outline-none focus:border-slate-400 focus:ring-3 focus:ring-slate-200"
+                  value={activeScannerItem.id}
+                  onChange={(event) => setActiveScannerItemId(event.target.value)}
+                  disabled={isBusy}
+                >
+                  {items.map((item, index) => (
+                    <option key={item.id} value={item.id}>
+                      Página {index + 1} · {item.file.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)]">
+                <div className="min-w-0">
+                  <div
+                    className="relative mx-auto max-w-2xl overflow-hidden rounded-xl border border-slate-200 bg-slate-900 shadow-sm"
+                    style={{ aspectRatio: `${activeScannerItem.width} / ${activeScannerItem.height}` }}
+                  >
+                    <img
+                      src={activeScannerItem.previewUrl}
+                      alt={`Editor de esquinas para ${activeScannerItem.file.name}`}
+                      className="absolute inset-0 size-full object-fill opacity-90"
+                    />
+                    <svg
+                      viewBox={`0 0 ${activeScannerItem.width} ${activeScannerItem.height}`}
+                      preserveAspectRatio="none"
+                      className="absolute inset-0 size-full touch-none"
+                      role="img"
+                      aria-label="Editor manual de las cuatro esquinas del documento"
+                      onPointerMove={handleScannerPointerMove}
+                      onPointerUp={handleScannerPointerUp}
+                      onPointerCancel={handleScannerPointerUp}
+                    >
+                      <polygon
+                        points={activeScannerItem.scanner.corners
+                          .map((point) => `${point.x},${point.y}`)
+                          .join(' ')}
+                        fill="rgba(255, 90, 69, 0.16)"
+                        stroke="#ff725f"
+                        strokeWidth={Math.max(2, Math.min(activeScannerItem.width, activeScannerItem.height) / 120)}
+                        vectorEffect="non-scaling-stroke"
+                      />
+                      {activeScannerItem.scanner.corners.map((point, index) => (
+                        <g key={scannerCornerLabels[index]}>
+                          <circle
+                            cx={point.x}
+                            cy={point.y}
+                            r={Math.max(10, Math.min(activeScannerItem.width, activeScannerItem.height) / 18)}
+                            fill="#ffffff"
+                            stroke="#e84c38"
+                            strokeWidth="3"
+                            className="cursor-grab drop-shadow-sm active:cursor-grabbing"
+                            aria-label={scannerCornerLabels[index]}
+                            role="button"
+                            tabIndex={0}
+                            onPointerDown={(event) => {
+                              if (isBusy) return
+                              event.currentTarget.setPointerCapture(event.pointerId)
+                              setDraggingCornerIndex(index)
+                            }}
+                            onKeyDown={(event) => {
+                              if (isBusy) return
+                              const step = event.shiftKey ? 10 : 2
+                              const delta =
+                                event.key === 'ArrowLeft'
+                                  ? { x: -step, y: 0 }
+                                  : event.key === 'ArrowRight'
+                                    ? { x: step, y: 0 }
+                                    : event.key === 'ArrowUp'
+                                      ? { x: 0, y: -step }
+                                      : event.key === 'ArrowDown'
+                                        ? { x: 0, y: step }
+                                        : null
+                              if (!delta) return
+                              event.preventDefault()
+                              setItems((currentItems) => {
+                                const item = currentItems.find((candidate) => candidate.id === activeScannerItem.id)
+                                if (!item) return currentItems
+                                const currentPoint = item.scanner.corners[index]
+                                const corners = item.scanner.corners.map((candidate, candidateIndex) =>
+                                  candidateIndex === index
+                                    ? clampScannerPoint(
+                                        { x: currentPoint.x + delta.x, y: currentPoint.y + delta.y },
+                                        item.width,
+                                        item.height,
+                                      )
+                                    : candidate,
+                                ) as unknown as ScannerCorners
+                                return setScannerCorners(currentItems, item.id, corners)
+                              })
+                            }}
+                          />
+                          <text
+                            x={point.x}
+                            y={point.y + 4}
+                            textAnchor="middle"
+                            className="pointer-events-none fill-slate-900 text-[12px] font-bold"
+                          >
+                            {index + 1}
+                          </text>
+                        </g>
+                      ))}
+                    </svg>
+                  </div>
+                  <p className="mt-2 flex items-center gap-2 text-xs leading-5 text-slate-500">
+                    <Crosshair className="size-3.5 shrink-0" aria-hidden="true" />
+                    Arrastra los cuatro puntos; también puedes enfocarlos y moverlos con las flechas.
+                  </p>
+                </div>
+
+                <div className="flex min-w-0 flex-col gap-3">
+                  <ScannerPerspectivePreview item={activeScannerItem} />
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs leading-5" aria-live="polite">
+                    <p className="font-medium text-slate-700">
+                      {activeScannerItem.scanner.detected
+                        ? `Confianza automática: ${Math.round(activeScannerItem.scanner.confidence * 100)}%`
+                        : 'Sin detección automática aplicada'}
+                    </p>
+                    {activeScannerItem.scanner.detected && activeScannerItem.scanner.confidence < 0.6 && (
+                      <p className="mt-1 text-amber-700">Confianza baja: revisa las esquinas antes de exportar.</p>
+                    )}
+                    {scannerMessage && <p className="mt-1 text-slate-500">{scannerMessage}</p>}
+                    {scannerStatus === 'error' && <p className="mt-1 text-red-700">Puedes continuar con el ajuste manual.</p>}
+                  </div>
+                  {!isScannerQuadrilateralValid(activeScannerItem.scanner.corners) && (
+                    <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                      Las esquinas se cruzan o están demasiado juntas. Corrígelas para aplicar la perspectiva.
+                    </p>
+                  )}
+                  {isScanning && scannerStage && (
+                    <div className="flex items-center gap-2 text-xs font-medium text-slate-600">
+                      <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+                      {({
+                        'loading-opencv': 'Cargando motor local…',
+                        detecting: 'Detectando documento…',
+                        'correcting-perspective': 'Corrigiendo perspectiva…',
+                        filtering: 'Preparando resultado…',
+                      } satisfies Record<ScannerWorkerStage, string>)[scannerStage]}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="rounded-xl bg-white"
+                      onClick={resetScanner}
+                      disabled={isBusy}
+                    >
+                      Restablecer esquinas
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={activeScannerItem.scanner.active ? 'outline' : 'default'}
+                      className="rounded-xl"
+                      onClick={toggleScannerPerspective}
+                      disabled={isBusy || !isScannerQuadrilateralValid(activeScannerItem.scanner.corners)}
+                    >
+                      {activeScannerItem.scanner.active ? 'Quitar perspectiva' : 'Aplicar perspectiva'}
+                    </Button>
+                    {isScanning ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="rounded-xl bg-white"
+                        onClick={cancelScannerDetection}
+                      >
+                        Cancelar detección
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="rounded-xl bg-white"
+                        onClick={() => void detectScannerDocument()}
+                        disabled={isBusy}
+                      >
+                        <ScanLine data-icon="inline-start" aria-hidden="true" />
+                        Detectar automáticamente
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
             </section>
@@ -743,7 +1300,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                     className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm font-normal text-slate-900 outline-none focus:border-slate-400 focus:ring-3 focus:ring-slate-200"
                     value={pagePreset}
                     onChange={(event) => setPagePreset(event.target.value as PdfPagePreset)}
-                    disabled={isExporting}
+                    disabled={isBusy}
                   >
                     <option value="a4">A4</option>
                     <option value="letter">Carta / Letter</option>
@@ -757,7 +1314,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                     className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm font-normal text-slate-900 outline-none focus:border-slate-400 focus:ring-3 focus:ring-slate-200"
                     value={String(marginMm)}
                     onChange={(event) => setMarginMm(Number(event.target.value) as PdfMarginMm)}
-                    disabled={isExporting}
+                    disabled={isBusy}
                   >
                     <option value="0">Sin margen</option>
                     <option value="5">5 mm</option>
@@ -773,7 +1330,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                     className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm font-normal text-slate-900 outline-none focus:border-slate-400 focus:ring-3 focus:ring-slate-200"
                     value={fitMode}
                     onChange={(event) => setFitMode(event.target.value as PdfFitMode)}
-                    disabled={isExporting}
+                    disabled={isBusy}
                   >
                     <option value="contain">Encajar completa</option>
                     <option value="cover">Cubrir página</option>
@@ -862,7 +1419,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
             <Button
               type="button"
               className="rounded-xl bg-slate-950 px-4 text-white shadow-lg shadow-slate-900/15 hover:bg-slate-800"
-              disabled={!items.length || isExporting}
+              disabled={!items.length || isBusy}
               onClick={() => void exportPdf()}
             >
               {isExporting ? (

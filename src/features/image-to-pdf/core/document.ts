@@ -1,4 +1,5 @@
 import type { ImageFilter } from './image-filters'
+import type { ImageScannerState, ScannerCorners } from './scanner/types'
 
 export const IMAGE_ACCEPT = [
   'image/jpeg',
@@ -38,6 +39,7 @@ export type ImageDocumentItem = {
   readonly file: File
   readonly filter: ImageFilter
   readonly previewUrl: string
+  readonly scanner: ImageScannerState
   readonly width: number
   readonly height: number
   readonly rotation: 0 | 90 | 180 | 270
@@ -197,6 +199,31 @@ export const applyImageFilterToAll = (
   items: readonly ImageDocumentItem[],
   filter: ImageFilter,
 ) => items.map((item) => ({ ...item, filter }))
+
+export const setScannerState = (
+  items: readonly ImageDocumentItem[],
+  id: string,
+  scanner: ImageScannerState,
+) => items.map((item) => (item.id === id ? { ...item, scanner } : item))
+
+export const setScannerCorners = (
+  items: readonly ImageDocumentItem[],
+  id: string,
+  corners: ScannerCorners,
+) =>
+  items.map((item) =>
+    item.id === id
+      ? {
+          ...item,
+          scanner: {
+            ...item.scanner,
+            active: false,
+            corners,
+            detected: false,
+          },
+        }
+      : item,
+  )
 
 export const removeImage = (
   items: readonly ImageDocumentItem[],

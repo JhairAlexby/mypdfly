@@ -4,6 +4,8 @@ import {
 } from '@/components/pdf-editor/export-cancellation'
 import type { ImageDocumentItem } from './document'
 import { getImageFilterCss } from './image-filters'
+import { getPerspectiveOutputSize, isScannerQuadrilateralValid } from './scanner/geometry'
+import { renderPerspectiveCanvas } from './scanner/perspective'
 
 export type PdfPagePreset = 'a4' | 'letter' | 'image'
 export type PdfFitMode = 'contain' | 'cover' | 'stretch'
@@ -54,9 +56,14 @@ const PAPER_SIZES: Record<Exclude<PdfPagePreset, 'image'>, { widthPt: number; he
 }
 
 const getOrientedImageDimensions = (item: ImageDocumentItem) =>
-  item.rotation === 90 || item.rotation === 270
-    ? { height: item.width, width: item.height }
-    : { height: item.height, width: item.width }
+  (() => {
+    const scannerDimensions = item.scanner.active
+      ? getPerspectiveOutputSize(item.scanner.corners)
+      : { height: item.height, width: item.width }
+    return item.rotation === 90 || item.rotation === 270
+      ? { height: scannerDimensions.width, width: scannerDimensions.height }
+      : scannerDimensions
+  })()
 
 export const getPdfPageLayout = (
   item: ImageDocumentItem,
@@ -181,25 +188,40 @@ const renderImagePage = async (
   signal?: AbortSignal,
 ) => {
   throwIfExportAborted(signal)
-  const image = await loadImageSource(item.file)
-  const drawRect = getPdfImageDrawRect(layout, fitMode)
-  const renderScale = Math.min(
-    PREFERRED_RENDER_SCALE,
-    Math.sqrt(
-      MAX_RENDER_PIXELS / (layout.pageWidthPt * layout.pageHeightPt),
-    ),
-  )
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.max(1, Math.round(layout.pageWidthPt * renderScale))
-  canvas.height = Math.max(1, Math.round(layout.pageHeightPt * renderScale))
-  const context = canvas.getContext('2d')
-
-  if (!context) {
-    image.close()
-    throw new Error('El navegador no pudo crear el lienzo de exportación.')
+  if (item.scanner.active && !isScannerQuadrilateralValid(item.scanner.corners)) {
+    throw new Error('Las esquinas del escáner no forman un cuadrilátero válido.')
   }
+  const image = await loadImageSource(item.file)
+  let perspective: Awaited<ReturnType<typeof renderPerspectiveCanvas>> | null = null
+  let canvas: HTMLCanvasElement | null = null
 
   try {
+    if (item.scanner.active) {
+      perspective = await renderPerspectiveCanvas(
+        image.source,
+        image.width,
+        image.height,
+        item.scanner.corners,
+        { signal },
+      )
+    }
+    throwIfExportAborted(signal)
+    const drawRect = getPdfImageDrawRect(layout, fitMode)
+    const renderScale = Math.min(
+      PREFERRED_RENDER_SCALE,
+      Math.sqrt(
+        MAX_RENDER_PIXELS / (layout.pageWidthPt * layout.pageHeightPt),
+      ),
+    )
+    canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(layout.pageWidthPt * renderScale))
+    canvas.height = Math.max(1, Math.round(layout.pageHeightPt * renderScale))
+    const context = canvas.getContext('2d')
+
+    if (!context) {
+      throw new Error('El navegador no pudo crear el lienzo de exportación.')
+    }
+
     context.fillStyle = '#ffffff'
     context.fillRect(0, 0, canvas.width, canvas.height)
     context.save()
@@ -215,14 +237,26 @@ const renderImagePage = async (
       (rotationSwapsDimensions ? drawRect.heightPt : drawRect.widthPt) * renderScale
     const drawHeight =
       (rotationSwapsDimensions ? drawRect.widthPt : drawRect.heightPt) * renderScale
-    context.drawImage(image.source, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight)
+    context.drawImage(
+      perspective?.canvas ?? image.source,
+      -drawWidth / 2,
+      -drawHeight / 2,
+      drawWidth,
+      drawHeight,
+    )
     context.restore()
     throwIfExportAborted(signal)
     return await canvasToPng(canvas)
   } finally {
+    if (perspective) {
+      perspective.canvas.width = 1
+      perspective.canvas.height = 1
+    }
+    if (canvas) {
+      canvas.width = 1
+      canvas.height = 1
+    }
     image.close()
-    canvas.width = 1
-    canvas.height = 1
   }
 }
 

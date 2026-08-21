@@ -10,6 +10,8 @@ import {
   removeImage,
   rotateImage,
   setImageFilter,
+  setScannerCorners,
+  setScannerState,
   validateImageFile,
   type ImageDocumentItem,
 } from '../src/features/image-to-pdf/core/document.ts'
@@ -23,6 +25,7 @@ import {
   getImageFilterCss,
   IMAGE_FILTERS,
 } from '../src/features/image-to-pdf/core/image-filters.ts'
+import { createImageScannerState } from '../src/features/image-to-pdf/core/scanner/geometry.ts'
 
 const createImageFile = (
   name: string,
@@ -42,6 +45,7 @@ const createItem = (id: string): ImageDocumentItem => ({
   id,
   previewUrl: `blob:${id}`,
   rotation: 0,
+  scanner: createImageScannerState(100, 100),
   width: 100,
 })
 
@@ -141,6 +145,29 @@ test('expone los cinco presets de filtro con una definición reutilizable para p
   assert.notEqual(getImageFilterCss('natural'), getImageFilterCss('original'))
   assert.notEqual(getImageFilterCss('clean-document'), getImageFilterCss('grayscale'))
   assert.notEqual(getImageFilterCss('black-and-white'), getImageFilterCss('grayscale'))
+})
+
+test('edita esquinas sin mutar páginas y solo activa la perspectiva al confirmarla', () => {
+  const items = [createItem('one'), createItem('two')]
+  const corners = [
+    { x: 8, y: 10 },
+    { x: 92, y: 6 },
+    { x: 95, y: 94 },
+    { x: 5, y: 90 },
+  ] as const
+
+  const edited = setScannerCorners(items, 'one', corners)
+  assert.equal(edited[0]?.scanner.active, false)
+  assert.equal(edited[0]?.scanner.detected, false)
+  assert.deepEqual(edited[0]?.scanner.corners, corners)
+  assert.deepEqual(items[0]?.scanner.corners, createImageScannerState(100, 100).corners)
+
+  const applied = setScannerState(edited, 'one', {
+    ...edited[0]!.scanner,
+    active: true,
+  })
+  assert.equal(applied[0]?.scanner.active, true)
+  assert.equal(edited[0]?.scanner.active, false)
 })
 
 test('calcula páginas A4 y Carta según la orientación de cada imagen', () => {

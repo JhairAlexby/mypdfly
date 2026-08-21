@@ -5,11 +5,13 @@ import {
   ArrowLeft,
   ArrowUp,
   CheckCircle2,
+  FileDown,
   FileImage,
   GripVertical,
   ImagePlus,
   LoaderCircle,
   RotateCw,
+  Settings2,
   ShieldCheck,
   Trash2,
   UploadCloud,
@@ -26,6 +28,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { formatFileSize } from '@/lib/files/format-file-size'
+import { downloadBlob } from '@/lib/files/download'
 import {
   IMAGE_ACCEPT,
   MAX_IMAGE_COUNT,
@@ -37,6 +40,14 @@ import {
   type ImageDocumentItem,
   validateImageFile,
 } from './core/document'
+import {
+  createImagesPdf,
+  isPdfExportCancelled,
+  type PdfExportProgress,
+  type PdfFitMode,
+  type PdfMarginMm,
+  type PdfPagePreset,
+} from './core/pdf-export'
 
 type ImageToPdfPageProps = {
   readonly homeHref?: string
@@ -44,7 +55,9 @@ type ImageToPdfPageProps = {
 
 const readImageDimensions = async (file: File) => {
   if (typeof createImageBitmap === 'function') {
-    const bitmap = await createImageBitmap(file)
+    const bitmap = await createImageBitmap(file, {
+      imageOrientation: 'from-image',
+    })
     try {
       return { height: bitmap.height, width: bitmap.width }
     } finally {
@@ -86,6 +99,14 @@ const createImageDocumentItem = async (file: File): Promise<ImageDocumentItem> =
 const formatImageLimits = () =>
   `Hasta ${MAX_IMAGE_COUNT} imágenes · ${formatFileSize(MAX_IMAGE_SIZE_BYTES)} por imagen · ${formatFileSize(MAX_TOTAL_IMAGE_SIZE_BYTES)} en total`
 
+type ExportState =
+  | { readonly status: 'idle'; readonly progress: 0 }
+  | ({ readonly status: 'running' | 'cancelling' } & PdfExportProgress)
+  | { readonly status: 'success'; readonly progress: 1 }
+  | { readonly status: 'cancelled' | 'error'; readonly progress: number }
+
+const initialExportState: ExportState = { progress: 0, status: 'idle' }
+
 export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const itemsRef = useRef<readonly ImageDocumentItem[]>([])
@@ -95,11 +116,20 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
   const [isReading, setIsReading] = useState(false)
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [pagePreset, setPagePreset] = useState<PdfPagePreset>('a4')
+  const [marginMm, setMarginMm] = useState<PdfMarginMm>(10)
+  const [fitMode, setFitMode] = useState<PdfFitMode>('contain')
+  const [exportState, setExportState] = useState<ExportState>(initialExportState)
+  const [exportError, setExportError] = useState('')
+  const exportControllerRef = useRef<AbortController | null>(null)
 
   const totalBytes = useMemo(
     () => items.reduce((total, item) => total + item.file.size, 0),
     [items],
   )
+
+  const isExporting =
+    exportState.status === 'running' || exportState.status === 'cancelling'
 
   useEffect(() => {
     itemsRef.current = items
@@ -107,18 +137,19 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
 
   useEffect(
     () => () => {
+      exportControllerRef.current?.abort()
       itemsRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl))
     },
     [],
   )
 
   const openFilePicker = () => {
-    if (!isReading) inputRef.current?.click()
+    if (!isReading && !isExporting) inputRef.current?.click()
   }
 
   const addFiles = async (fileList: FileList | readonly File[]) => {
     const selectedFiles = Array.from(fileList)
-    if (!selectedFiles.length || isReading) return
+    if (!selectedFiles.length || isReading || isExporting) return
 
     setIsReading(true)
     const nextItems = [...items]
@@ -170,6 +201,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
   }
 
   const removeItem = (id: string) => {
+    if (isExporting) return
     const item = items.find((candidate) => candidate.id === id)
     if (!item) return
     URL.revokeObjectURL(item.previewUrl)
@@ -177,17 +209,20 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
   }
 
   const rotateItem = (id: string) => {
+    if (isExporting) return
     setItems(
       items.map((item) => (item.id === id ? rotateImage(item) : item)),
     )
   }
 
   const moveItem = (id: string, direction: -1 | 1) => {
+    if (isExporting) return
     const currentIndex = items.findIndex((item) => item.id === id)
     setItems(moveImage(items, currentIndex, currentIndex + direction))
   }
 
   const clearDocument = () => {
+    if (isExporting) return
     items.forEach((item) => URL.revokeObjectURL(item.previewUrl))
     setItems([])
     setErrors([])
@@ -200,6 +235,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
 
   const handleDropOnItem = (event: DragEvent<HTMLElement>, targetId: string) => {
     event.preventDefault()
+    if (isExporting) return
     if (!draggedId || draggedId === targetId) {
       setDraggedId(null)
       setDragOverId(null)
@@ -211,6 +247,67 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
     setItems(moveImage(items, fromIndex, toIndex))
     setDraggedId(null)
     setDragOverId(null)
+  }
+
+  const handleExportProgress = (progress: PdfExportProgress) => {
+    setExportState((currentState) =>
+      currentState.status === 'cancelling'
+        ? { ...progress, status: 'cancelling' }
+        : { ...progress, status: 'running' },
+    )
+  }
+
+  const exportPdf = async () => {
+    if (!items.length || isExporting) return
+
+    const controller = new AbortController()
+    exportControllerRef.current = controller
+    setExportError('')
+    setExportState({
+      currentPage: 0,
+      progress: 0,
+      stage: 'rendering',
+      status: 'running',
+      totalPages: items.length,
+    })
+
+    try {
+      const blob = await createImagesPdf(items, {
+        fitMode,
+        marginMm,
+        onProgress: handleExportProgress,
+        pagePreset,
+        signal: controller.signal,
+      })
+      downloadBlob(blob, 'imagenes-a-pdf.pdf')
+      setExportState({ progress: 1, status: 'success' })
+    } catch (error) {
+      if (isPdfExportCancelled(error)) {
+        setExportState({ progress: 0, status: 'cancelled' })
+      } else {
+        setExportError(
+          error instanceof Error
+            ? error.message
+            : 'No se pudo generar el PDF.',
+        )
+        setExportState({ progress: 0, status: 'error' })
+      }
+    } finally {
+      if (exportControllerRef.current === controller) {
+        exportControllerRef.current = null
+      }
+    }
+  }
+
+  const cancelExport = () => {
+    if (!isExporting) return
+    setExportState((currentState) => {
+      if (currentState.status !== 'running' && currentState.status !== 'cancelling') {
+        return currentState
+      }
+      return { ...currentState, status: 'cancelling' }
+    })
+    exportControllerRef.current?.abort()
   }
 
   return (
@@ -240,7 +337,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                 Imágenes a PDF
               </CardTitle>
               <CardDescription className="mt-1 max-w-2xl text-sm leading-6 sm:text-base">
-                Carga tus imágenes, organiza el documento y prepara cada página antes de aplicar filtros y exportarlo.
+                Carga tus imágenes, organiza el documento y configura cada página antes de exportarlo.
               </CardDescription>
             </div>
           </div>
@@ -332,7 +429,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                 variant="outline"
                 className="rounded-xl bg-white"
                 onClick={openFilePicker}
-                disabled={isReading}
+                disabled={isReading || isExporting}
               >
                 <ImagePlus data-icon="inline-start" aria-hidden="true" />
                 Añadir imágenes
@@ -432,7 +529,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                             size="icon-sm"
                             className="rounded-lg text-slate-500 hover:text-slate-950"
                             onClick={() => moveItem(item.id, -1)}
-                            disabled={index === 0}
+                            disabled={index === 0 || isExporting}
                             aria-label={`Mover ${item.file.name} arriba`}
                             title="Mover arriba"
                           >
@@ -444,7 +541,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                             size="icon-sm"
                             className="rounded-lg text-slate-500 hover:text-slate-950"
                             onClick={() => moveItem(item.id, 1)}
-                            disabled={index === items.length - 1}
+                            disabled={index === items.length - 1 || isExporting}
                             aria-label={`Mover ${item.file.name} abajo`}
                             title="Mover abajo"
                           >
@@ -456,6 +553,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                             size="icon-sm"
                             className="rounded-lg text-slate-500 hover:text-slate-950"
                             onClick={() => rotateItem(item.id)}
+                            disabled={isExporting}
                             aria-label={`Rotar ${item.file.name}`}
                             title="Rotar 90°"
                           >
@@ -468,6 +566,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                           size="icon-sm"
                           className="rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-700"
                           onClick={() => removeItem(item.id)}
+                          disabled={isExporting}
                           aria-label={`Eliminar ${item.file.name}`}
                           title="Eliminar imagen"
                         >
@@ -479,6 +578,127 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                 ))}
               </div>
             </section>
+          )}
+
+          {items.length > 0 && (
+            <section
+              aria-labelledby="pdf-options-title"
+              data-testid="pdf-options"
+              className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5"
+            >
+              <div className="mb-4 flex items-start gap-3">
+                <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-white text-slate-600 shadow-sm ring-1 ring-slate-200">
+                  <Settings2 className="size-4" aria-hidden="true" />
+                </div>
+                <div>
+                  <h2 id="pdf-options-title" className="text-sm font-semibold text-slate-950">
+                    Configuración del PDF
+                  </h2>
+                  <p className="mt-0.5 text-xs leading-5 text-slate-500">
+                    Estas opciones se aplican a todas las páginas al descargar el documento.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="grid gap-1.5 text-xs font-medium text-slate-600">
+                  Tamaño de página
+                  <select
+                    aria-label="Tamaño de página"
+                    className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm font-normal text-slate-900 outline-none focus:border-slate-400 focus:ring-3 focus:ring-slate-200"
+                    value={pagePreset}
+                    onChange={(event) => setPagePreset(event.target.value as PdfPagePreset)}
+                    disabled={isExporting}
+                  >
+                    <option value="a4">A4</option>
+                    <option value="letter">Carta / Letter</option>
+                    <option value="image">Tamaño de imagen</option>
+                  </select>
+                </label>
+                <label className="grid gap-1.5 text-xs font-medium text-slate-600">
+                  Márgenes
+                  <select
+                    aria-label="Márgenes"
+                    className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm font-normal text-slate-900 outline-none focus:border-slate-400 focus:ring-3 focus:ring-slate-200"
+                    value={String(marginMm)}
+                    onChange={(event) => setMarginMm(Number(event.target.value) as PdfMarginMm)}
+                    disabled={isExporting}
+                  >
+                    <option value="0">Sin margen</option>
+                    <option value="5">5 mm</option>
+                    <option value="10">10 mm</option>
+                    <option value="15">15 mm</option>
+                    <option value="20">20 mm</option>
+                  </select>
+                </label>
+                <label className="grid gap-1.5 text-xs font-medium text-slate-600">
+                  Ajuste de imagen
+                  <select
+                    aria-label="Ajuste de imagen"
+                    className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm font-normal text-slate-900 outline-none focus:border-slate-400 focus:ring-3 focus:ring-slate-200"
+                    value={fitMode}
+                    onChange={(event) => setFitMode(event.target.value as PdfFitMode)}
+                    disabled={isExporting}
+                  >
+                    <option value="contain">Encajar completa</option>
+                    <option value="cover">Cubrir página</option>
+                    <option value="stretch">Estirar al área</option>
+                  </select>
+                </label>
+              </div>
+
+              <p className="mt-3 text-xs text-slate-500">
+                {pagePreset === 'image'
+                  ? 'El tamaño de cada página se calcula a partir de sus píxeles y respeta los márgenes elegidos.'
+                  : 'La orientación se adapta automáticamente a la orientación dominante de cada imagen.'}
+              </p>
+            </section>
+          )}
+
+          {(isExporting || exportState.status === 'success' || exportState.status === 'cancelled' || exportError) && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm" aria-live="polite">
+              {isExporting && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-3 text-xs font-medium text-slate-600">
+                    <span>
+                      {exportState.status === 'cancelling'
+                        ? 'Cancelando exportación…'
+                        : exportState.stage === 'saving'
+                          ? 'Guardando PDF…'
+                          : `Componiendo página ${exportState.currentPage} de ${exportState.totalPages}…`}
+                    </span>
+                    <span>{Math.round(exportState.progress * 100)}%</span>
+                  </div>
+                  <div
+                    className="h-2 overflow-hidden rounded-full bg-slate-100"
+                    role="progressbar"
+                    aria-label="Progreso de exportación"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(exportState.progress * 100)}
+                  >
+                    <div
+                      className="h-full rounded-full bg-[#e84c38] transition-[width] duration-200"
+                      style={{ width: `${Math.max(4, exportState.progress * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              {exportState.status === 'success' && (
+                <p className="flex items-center gap-2 text-sm font-medium text-emerald-700">
+                  <CheckCircle2 className="size-4" aria-hidden="true" />
+                  PDF generado y descargado correctamente.
+                </p>
+              )}
+              {exportState.status === 'cancelled' && (
+                <p className="text-sm font-medium text-slate-600">
+                  La exportación se canceló sin descargar un archivo incompleto.
+                </p>
+              )}
+              {exportError && (
+                <p className="text-sm font-medium text-red-700">{exportError}</p>
+              )}
+            </div>
           )}
         </CardContent>
 
@@ -493,9 +713,31 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
               ? 'Las páginas permanecen en el orden que elegiste.'
               : 'Tus imágenes permanecen en tu dispositivo.'}
           </p>
-          <p className="text-xs text-slate-400">
-            Filtros y exportación PDF estarán disponibles en el siguiente paso.
-          </p>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {isExporting && (
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-xl bg-white"
+                onClick={cancelExport}
+              >
+                Cancelar
+              </Button>
+            )}
+            <Button
+              type="button"
+              className="rounded-xl bg-slate-950 px-4 text-white shadow-lg shadow-slate-900/15 hover:bg-slate-800"
+              disabled={!items.length || isExporting}
+              onClick={() => void exportPdf()}
+            >
+              {isExporting ? (
+                <LoaderCircle className="animate-spin" data-icon="inline-start" aria-hidden="true" />
+              ) : (
+                <FileDown data-icon="inline-start" aria-hidden="true" />
+              )}
+              {isExporting ? 'Generando PDF…' : 'Generar y descargar PDF'}
+            </Button>
+          </div>
         </CardFooter>
       </Card>
     </main>

@@ -118,12 +118,14 @@ export {
   AVIF_COMPRESSION_PROCESSOR_ID,
   createModernImageCompressionProcessor,
   DEFAULT_MODERN_IMAGE_QUALITY,
+  decodeModernImageFile,
   inspectModernImageFile,
   MINIMUM_MODERN_IMAGE_QUALITY,
   webpCompressionProcessor,
   WEBP_COMPRESSION_PROCESSOR_ID,
 } from './modern-image-processor'
 export type {
+  DecodedModernImage,
   ModernImageInspection,
   ModernImageProcessorDependencies,
 } from './modern-image-processor'

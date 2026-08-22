@@ -5,7 +5,7 @@ import {
   Check,
   Eye,
   FileArchive,
-  FileOutput,
+  FileImage,
   FileText,
   MousePointer2,
   ShieldCheck,
@@ -42,6 +42,12 @@ const FileCompressionPage = lazy(() =>
   })),
 )
 
+const ImageToPdfPage = lazy(() =>
+  import('@/features/image-to-pdf/image-to-pdf-page').then((module) => ({
+    default: module.ImageToPdfPage,
+  })),
+)
+
 const normalizePath = (path: string) => path.replace(/\/+$/, '') || '/'
 
 const getAppPath = (path: string) => {
@@ -52,6 +58,7 @@ const getAppPath = (path: string) => {
 }
 
 const compressionPath = getAppPath('comprimir')
+const imageToPdfPath = getAppPath('imagenes-a-pdf')
 
 const isEditorPath = (pathname: string) => {
   const currentPath = normalizePath(pathname)
@@ -63,6 +70,9 @@ const isEditorPath = (pathname: string) => {
 
 const isCompressionPath = (pathname: string) =>
   normalizePath(pathname) === compressionPath
+
+const isImageToPdfPath = (pathname: string) =>
+  normalizePath(pathname) === imageToPdfPath
 
 function PdfWorkspaceApp() {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -271,20 +281,24 @@ function PdfWorkspaceApp() {
                 </a>
               </Button>
               <Button
-                type="button"
                 variant="outline"
-                disabled
-                className="h-auto min-h-14 justify-start gap-3 rounded-xl border-slate-200 bg-white/75 px-3.5 py-3 text-left shadow-sm disabled:cursor-not-allowed disabled:opacity-100 sm:px-4"
+                asChild
+                className="h-auto min-h-14 justify-start gap-3 rounded-xl border-slate-200 bg-white/75 px-3.5 py-3 text-left shadow-sm hover:border-slate-300 hover:bg-white sm:px-4"
               >
-                <FileOutput className="size-5 shrink-0 text-slate-400" aria-hidden="true" />
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium text-slate-700">
-                    PDF a Word
+                <a href={imageToPdfPath}>
+                  <FileImage className="size-5 shrink-0 text-slate-500" aria-hidden="true" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium text-slate-700">
+                      Imágenes a PDF
+                    </span>
+                    <span className="mt-0.5 block text-xs font-normal text-slate-500">
+                      Escaneo · perspectiva · filtros
+                    </span>
+                    <span className="mt-0.5 block text-[11px] font-medium text-[#e84c38]">
+                      Abrir herramienta
+                    </span>
                   </span>
-                  <span className="mt-0.5 block text-xs font-normal text-slate-400">
-                    Próximamente
-                  </span>
-                </span>
+                </a>
               </Button>
             </div>
           </section>
@@ -371,6 +385,24 @@ function PdfWorkspaceApp() {
 }
 
 function App() {
+  if (isImageToPdfPath(window.location.pathname)) {
+    return (
+      <div className="flex min-h-svh flex-col overflow-hidden text-foreground">
+        <AppHeader />
+        <Suspense
+          fallback={
+            <main className="grid flex-1 place-items-center px-4 py-16 text-sm text-slate-500">
+              Preparando herramienta…
+            </main>
+          }
+        >
+          <ImageToPdfPage homeHref={import.meta.env.BASE_URL} />
+        </Suspense>
+        <AppFooter />
+      </div>
+    )
+  }
+
   if (isCompressionPath(window.location.pathname)) {
     return (
       <div className="flex min-h-svh flex-col overflow-hidden text-foreground">

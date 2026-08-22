@@ -5,6 +5,13 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
+  build: {
+    rollupOptions: {
+      input: {
+        app: path.resolve(import.meta.dirname, 'index.html'),
+      },
+    },
+  },
   optimizeDeps: {
     exclude: [
       '@jsquash/avif',

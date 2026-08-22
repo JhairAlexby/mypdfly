@@ -10,6 +10,7 @@ import {
 } from '../src/features/file-compression/core/index.ts'
 import {
   createModernImageCompressionProcessor,
+  decodeModernImageFile,
   inspectModernImageFile,
   registerAvifCompressionProcessor,
   registerWebpCompressionProcessor,
@@ -157,6 +158,54 @@ test('inspecciona AVIF y conserva el original cuando no reduce', async () => {
   assert.equal(output.blob.size, file.size)
   assert.equal(output.metadata?.usedOriginal, true)
   assert.equal(output.warnings?.length, 2)
+})
+
+test('decodifica WebP y AVIF a píxeles RGBA para adaptadores de preview y PDF', async () => {
+  const calls: ModernImageCodecOptions[] = []
+  const pixels = new Uint8ClampedArray([255, 0, 0, 255, 0, 255, 0, 255]).buffer
+  const dependencies: ModernImageProcessorDependencies = {
+    process: async (_input, options) => {
+      calls.push(options)
+      return { height: 1, pixels, width: 2 }
+    },
+  }
+
+  const webp = await decodeModernImageFile(
+    createModernFile('webp'),
+    'webp',
+    undefined,
+    dependencies,
+  )
+  const avif = await decodeModernImageFile(
+    createModernFile('avif'),
+    'avif',
+    undefined,
+    dependencies,
+  )
+
+  assert.equal(webp.width, 2)
+  assert.equal(avif.height, 1)
+  assert.deepEqual(Array.from(new Uint8ClampedArray(webp.pixels)), [
+    255, 0, 0, 255, 0, 255, 0, 255,
+  ])
+  assert.deepEqual(calls, [
+    { format: 'webp', mode: 'decode', quality: 80 },
+    { format: 'avif', mode: 'decode', quality: 80 },
+  ])
+})
+
+test('rechaza un resultado de decodificación moderna con tamaño RGBA inconsistente', async () => {
+  await assert.rejects(
+    decodeModernImageFile(
+      createModernFile('avif'),
+      'avif',
+      undefined,
+      { process: async () => ({ height: 2, pixels: new ArrayBuffer(4), width: 2 }) },
+    ),
+    (error) =>
+      error instanceof CompressionCoreError &&
+      error.code === 'invalid-processor-output',
+  )
 })
 
 test('rechaza WebP animado antes de perder fotogramas', async () => {

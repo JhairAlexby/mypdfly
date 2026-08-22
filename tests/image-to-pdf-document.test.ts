@@ -1,0 +1,316 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import {
+  MAX_IMAGE_COUNT,
+  MAX_IMAGE_PIXELS,
+  MAX_IMAGE_SIZE_BYTES,
+  MAX_TOTAL_IMAGE_PIXELS,
+  MAX_TOTAL_IMAGE_SIZE_BYTES,
+  applyImageFilterToAll,
+  moveImage,
+  removeImage,
+  rotateImage,
+  setImageFilter,
+  setScannerCorners,
+  setScannerState,
+  validateImageFile,
+  type ImageDocumentItem,
+} from '../src/features/image-to-pdf/core/document.ts'
+import {
+  assertImageExportBudget,
+  createImagesPdf,
+  getPdfImageDrawRect,
+  getPdfPageLayout,
+  isPdfExportCancelled,
+} from '../src/features/image-to-pdf/core/pdf-export.ts'
+import {
+  applyImageFilterToPixels,
+  getImageFilterCss,
+  IMAGE_FILTERS,
+  type ImageFilter,
+} from '../src/features/image-to-pdf/core/image-filters.ts'
+import { createImageScannerState } from '../src/features/image-to-pdf/core/scanner/geometry.ts'
+
+const createImageFile = (
+  name: string,
+  type = 'image/jpeg',
+  size = 1024,
+  lastModified = 1,
+) =>
+  new File([new Uint8Array(size)], name, {
+    lastModified,
+    type,
+  })
+
+const createItem = (id: string): ImageDocumentItem => ({
+  file: createImageFile(`${id}.jpg`),
+  filter: 'original',
+  height: 100,
+  id,
+  previewUrl: `blob:${id}`,
+  rotation: 0,
+  scanner: createImageScannerState(100, 100),
+  width: 100,
+})
+
+test('valida formatos de imagen compatibles y permite MIME ausente con extensión válida', () => {
+  assert.deepEqual(
+    validateImageFile(createImageFile('foto.JPG', '')),
+    { mimeType: 'image/jpeg', valid: true },
+  )
+  assert.deepEqual(
+    validateImageFile(createImageFile('documento.png', 'image/png')),
+    { mimeType: 'image/png', valid: true },
+  )
+})
+
+test('rechaza archivos vacíos, formatos no compatibles y conflictos de tipo', () => {
+  assert.equal(
+    validateImageFile(createImageFile('vacio.png', 'image/png', 0)).code,
+    'empty-file',
+  )
+  assert.equal(
+    validateImageFile(createImageFile('archivo.gif', 'image/gif')).code,
+    'unsupported-format',
+  )
+  assert.equal(
+    validateImageFile(createImageFile('foto.png', 'image/jpeg')).code,
+    'mime-extension-mismatch',
+  )
+})
+
+test('aplica límites por imagen, por documento, por cantidad y evita duplicados', () => {
+  assert.equal(
+    validateImageFile(
+      createImageFile('grande.jpg', 'image/jpeg', MAX_IMAGE_SIZE_BYTES + 1),
+    ).code,
+    'file-too-large',
+  )
+  assert.equal(
+    validateImageFile(createImageFile('ultima.jpg'), {
+      existingCount: MAX_IMAGE_COUNT,
+    }).code,
+    'too-many-files',
+  )
+  assert.equal(
+    validateImageFile(createImageFile('limite.jpg', 'image/jpeg', 2), {
+      existingTotalBytes: MAX_TOTAL_IMAGE_SIZE_BYTES - 1,
+    }).code,
+    'total-size-too-large',
+  )
+
+  const duplicate = createImageFile('misma.jpg', 'image/jpeg', 123, 99)
+  assert.equal(
+    validateImageFile(duplicate, { existingFiles: [duplicate] }).code,
+    'duplicate-file',
+  )
+  assert.equal(
+    validateImageFile(createImageFile('gigante.webp', 'image/webp'), {
+      height: 5_000,
+      width: 9_000,
+    }).code,
+    'image-too-many-pixels',
+  )
+  assert.equal(
+    validateImageFile(createImageFile('lote.avif', 'image/avif'), {
+      existingTotalPixels: MAX_TOTAL_IMAGE_PIXELS - 1,
+      height: 2,
+      width: 2,
+    }).code,
+    'total-pixels-too-large',
+  )
+  assert.ok(MAX_IMAGE_PIXELS < MAX_TOTAL_IMAGE_PIXELS)
+})
+
+test('reordena, elimina y rota páginas sin mutar la colección original', () => {
+  const items = [createItem('one'), createItem('two'), createItem('three')]
+
+  assert.deepEqual(
+    moveImage(items, 2, 0).map((item) => item.id),
+    ['three', 'one', 'two'],
+  )
+  assert.deepEqual(
+    moveImage(items, 0, 1).map((item) => item.id),
+    ['two', 'one', 'three'],
+  )
+  assert.deepEqual(
+    removeImage(items, 'two').map((item) => item.id),
+    ['one', 'three'],
+  )
+  assert.equal(rotateImage(items[0]).rotation, 90)
+  assert.equal(rotateImage({ ...items[0], rotation: 270 }).rotation, 0)
+  assert.deepEqual(items.map((item) => item.id), ['one', 'two', 'three'])
+})
+
+test('aplica filtros por página o a todo el documento sin mutar archivos ni páginas originales', () => {
+  const items = [createItem('one'), createItem('two')]
+
+  const selected = setImageFilter(items, 'two', 'clean-document')
+  assert.equal(selected[0]?.filter, 'original')
+  assert.equal(selected[1]?.filter, 'clean-document')
+  assert.equal(items[1]?.filter, 'original')
+  assert.equal(selected[1]?.file, items[1]?.file)
+
+  const all = applyImageFilterToAll(selected, 'grayscale')
+  assert.deepEqual(all.map((item) => item.filter), ['grayscale', 'grayscale'])
+  assert.deepEqual(items.map((item) => item.filter), ['original', 'original'])
+})
+
+test('expone los cinco presets de filtro con una definición reutilizable para preview y canvas', () => {
+  assert.deepEqual(
+    IMAGE_FILTERS.map((definition) => definition.label),
+    ['Original', 'Natural', 'Documento limpio', 'Grises', 'Blanco y negro'],
+  )
+  assert.equal(getImageFilterCss('original'), 'none')
+  assert.notEqual(getImageFilterCss('natural'), getImageFilterCss('original'))
+  assert.notEqual(getImageFilterCss('clean-document'), getImageFilterCss('grayscale'))
+  assert.notEqual(getImageFilterCss('black-and-white'), getImageFilterCss('grayscale'))
+})
+
+test('aplica cada preset directamente a píxeles y conserva el canal alfa', () => {
+  const source = new Uint8ClampedArray([
+    220, 80, 40, 128,
+    30, 170, 240, 64,
+  ])
+  const apply = (filter: ImageFilter) => {
+    const pixels = new Uint8ClampedArray(source)
+    assert.equal(applyImageFilterToPixels(pixels, filter), pixels)
+    assert.equal(pixels[3], source[3])
+    assert.equal(pixels[7], source[7])
+    return pixels
+  }
+
+  const original = apply('original')
+  const natural = apply('natural')
+  const grayscale = apply('grayscale')
+  const cleanDocument = apply('clean-document')
+  const blackAndWhite = apply('black-and-white')
+
+  assert.deepEqual(original, source)
+  assert.notDeepEqual(natural, source)
+  assert.ok(natural[0] - natural[2] > source[0] - source[2])
+
+  for (const pixels of [grayscale, cleanDocument, blackAndWhite]) {
+    assert.equal(pixels[0], pixels[1])
+    assert.equal(pixels[1], pixels[2])
+    assert.equal(pixels[4], pixels[5])
+    assert.equal(pixels[5], pixels[6])
+  }
+
+  const grayscaleContrast = Math.abs(grayscale[4] - grayscale[0])
+  const cleanDocumentContrast = Math.abs(cleanDocument[4] - cleanDocument[0])
+  const blackAndWhiteContrast = Math.abs(blackAndWhite[4] - blackAndWhite[0])
+  assert.ok(cleanDocumentContrast > grayscaleContrast)
+  assert.ok(blackAndWhiteContrast > cleanDocumentContrast)
+})
+
+test('edita esquinas sin mutar páginas y conserva si la perspectiva ya estaba activa', () => {
+  const items = [createItem('one'), createItem('two')]
+  const corners = [
+    { x: 8, y: 10 },
+    { x: 92, y: 6 },
+    { x: 95, y: 94 },
+    { x: 5, y: 90 },
+  ] as const
+
+  const inactiveEdited = setScannerCorners(items, 'one', corners)
+  assert.equal(inactiveEdited[0]?.scanner.active, false)
+  assert.equal(inactiveEdited[0]?.scanner.detected, false)
+  assert.deepEqual(inactiveEdited[0]?.scanner.corners, corners)
+  assert.deepEqual(items[0]?.scanner.corners, createImageScannerState(100, 100).corners)
+
+  const applied = setScannerState(inactiveEdited, 'one', {
+    ...inactiveEdited[0]!.scanner,
+    active: true,
+    confidence: 0.85,
+    detected: true,
+  })
+  const activeEdited = setScannerCorners(applied, 'one', corners)
+
+  assert.equal(activeEdited[0]?.scanner.active, true)
+  assert.equal(activeEdited[0]?.scanner.detected, false)
+  assert.equal(activeEdited[0]?.scanner.confidence, 0.85)
+  assert.deepEqual(activeEdited[0]?.scanner.corners, corners)
+  assert.equal(applied[0]?.scanner.active, true)
+  assert.equal(applied[0]?.scanner.detected, true)
+  assert.equal(inactiveEdited[0]?.scanner.active, false)
+})
+
+test('calcula páginas A4 y Carta según la orientación de cada imagen', () => {
+  const portrait = createItem('portrait')
+  const landscape = { ...createItem('landscape'), height: 100, width: 200 }
+  const rotatedLandscape = { ...landscape, rotation: 90 as const }
+
+  const a4Portrait = getPdfPageLayout(portrait, 'a4', 10)
+  assert.equal(a4Portrait.pageWidthPt, 595.28)
+  assert.equal(a4Portrait.pageHeightPt, 841.89)
+  assert.equal(a4Portrait.marginPt, (10 * 72) / 25.4)
+
+  const letterLandscape = getPdfPageLayout(landscape, 'letter', 0)
+  assert.equal(letterLandscape.pageWidthPt, 792)
+  assert.equal(letterLandscape.pageHeightPt, 612)
+  assert.equal(letterLandscape.contentWidthPt, 792)
+  assert.equal(letterLandscape.contentHeightPt, 612)
+
+  const rotatedA4 = getPdfPageLayout(rotatedLandscape, 'a4', 0)
+  assert.equal(rotatedA4.pageWidthPt, 595.28)
+  assert.equal(rotatedA4.pageHeightPt, 841.89)
+})
+
+test('mantiene tamaño de imagen, márgenes y reglas de ajuste', () => {
+  const item = { ...createItem('wide'), height: 100, width: 200 }
+  const layout = getPdfPageLayout(item, 'image', 5)
+  const marginPt = (5 * 72) / 25.4
+
+  assert.equal(layout.pageWidthPt, 200 * (72 / 96) + marginPt * 2)
+  assert.equal(layout.pageHeightPt, 100 * (72 / 96) + marginPt * 2)
+
+  const contain = getPdfImageDrawRect(
+    getPdfPageLayout(item, 'a4', 10),
+    'contain',
+  )
+  const cover = getPdfImageDrawRect(
+    getPdfPageLayout(item, 'a4', 10),
+    'cover',
+  )
+  const stretch = getPdfImageDrawRect(
+    getPdfPageLayout(item, 'a4', 10),
+    'stretch',
+  )
+
+  assert.ok(contain.widthPt <= getPdfPageLayout(item, 'a4', 10).contentWidthPt)
+  assert.ok(contain.heightPt <= getPdfPageLayout(item, 'a4', 10).contentHeightPt)
+  assert.ok(cover.widthPt >= getPdfPageLayout(item, 'a4', 10).contentWidthPt)
+  assert.ok(cover.heightPt >= getPdfPageLayout(item, 'a4', 10).contentHeightPt)
+  assert.equal(stretch.widthPt, getPdfPageLayout(item, 'a4', 10).contentWidthPt)
+  assert.equal(stretch.heightPt, getPdfPageLayout(item, 'a4', 10).contentHeightPt)
+})
+
+test('protege la exportación contra imágenes con un presupuesto de píxeles excesivo', () => {
+  const oversized = {
+    ...createItem('oversized'),
+    height: 6_000,
+    width: 7_000,
+  }
+
+  assert.throws(
+    () => assertImageExportBudget([oversized]),
+    /supera el límite de 40 MP/,
+  )
+})
+
+test('rechaza una exportación cancelada antes de cargar el procesador PDF', async () => {
+  const controller = new AbortController()
+  controller.abort()
+
+  await assert.rejects(
+    createImagesPdf([createItem('cancelled')], {
+      fitMode: 'contain',
+      marginMm: 0,
+      pagePreset: 'a4',
+      signal: controller.signal,
+    }),
+    (error: unknown) => isPdfExportCancelled(error),
+  )
+})

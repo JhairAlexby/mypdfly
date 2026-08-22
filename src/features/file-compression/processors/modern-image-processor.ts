@@ -22,6 +22,10 @@ export type ModernImageInspection = {
   readonly width: number
 }
 
+export type DecodedModernImage = ModernImageInspection & {
+  readonly pixels: ArrayBuffer
+}
+
 export type ModernImageProcessorDependencies = {
   readonly process: ModernImageCodec
 }
@@ -141,6 +145,41 @@ export const inspectModernImageFile = async (
   throwIfAborted(signal)
 
   return { height: result.height, width: result.width }
+}
+
+export const decodeModernImageFile = async (
+  file: File,
+  format: ModernImageFormat,
+  signal?: AbortSignal,
+  dependencies: ModernImageProcessorDependencies = browserDependencies,
+): Promise<DecodedModernImage> => {
+  const input = await getValidatedBytes(file, format, signal)
+  const result = await dependencies.process(
+    input,
+    {
+      format,
+      mode: 'decode',
+      quality: DEFAULT_MODERN_IMAGE_QUALITY,
+    },
+    signal,
+  )
+  throwIfAborted(signal)
+
+  if (
+    !result.pixels ||
+    result.pixels.byteLength !== result.width * result.height * 4
+  ) {
+    throw new CompressionCoreError(
+      'invalid-processor-output',
+      `El decodificador ${format.toUpperCase()} no devolvió píxeles RGBA válidos.`,
+    )
+  }
+
+  return {
+    height: result.height,
+    pixels: result.pixels,
+    width: result.width,
+  }
 }
 
 export const createModernImageCompressionProcessor = (

@@ -2,15 +2,6 @@ import { throwIfExportAborted } from '@/components/pdf-editor/export-cancellatio
 import { getPerspectiveOutputSize } from './geometry'
 import type { ScannerCorners, ScannerPoint } from './types'
 
-type AffineMatrix = {
-  readonly a: number
-  readonly b: number
-  readonly c: number
-  readonly d: number
-  readonly e: number
-  readonly f: number
-}
-
 export type PerspectiveCanvas = {
   readonly canvas: HTMLCanvasElement
   readonly logicalHeight: number
@@ -22,67 +13,12 @@ export type PerspectiveRenderOptions = {
 }
 
 const MAX_PERSPECTIVE_PIXELS = 8_000_000
-const MAX_GRID_SEGMENTS = 48
-const MIN_GRID_SEGMENTS = 12
-const GRID_PIXELS = 160
+const REMAP_TILE_HEIGHT = 128
+const REMAP_TILE_WIDTH = 512
+const SOURCE_SAMPLE_BORDER = 1
 
-const determinant3 = (
-  first: readonly [number, number, number],
-  second: readonly [number, number, number],
-  third: readonly [number, number, number],
-) =>
-  first[0] * (second[1] * third[2] - second[2] * third[1]) -
-  first[1] * (second[0] * third[2] - second[2] * third[0]) +
-  first[2] * (second[0] * third[1] - second[1] * third[0])
-
-const solveAffine = (
-  source: readonly [ScannerPoint, ScannerPoint, ScannerPoint],
-  target: readonly [ScannerPoint, ScannerPoint, ScannerPoint],
-): AffineMatrix => {
-  const matrix: [
-    [number, number, number],
-    [number, number, number],
-    [number, number, number],
-  ] = [
-    [source[0].x, source[0].y, 1],
-    [source[1].x, source[1].y, 1],
-    [source[2].x, source[2].y, 1],
-  ]
-  const determinant = determinant3(matrix[0], matrix[1], matrix[2])
-  if (Math.abs(determinant) < 0.000001) {
-    throw new Error('No se pudo calcular una transformación de perspectiva válida.')
-  }
-
-  const solve = (values: readonly [number, number, number]) => {
-    const x = determinant3(
-      [values[0], matrix[0][1], matrix[0][2]],
-      [values[1], matrix[1][1], matrix[1][2]],
-      [values[2], matrix[2][1], matrix[2][2]],
-    ) / determinant
-    const y = determinant3(
-      [matrix[0][0], values[0], matrix[0][2]],
-      [matrix[1][0], values[1], matrix[1][2]],
-      [matrix[2][0], values[2], matrix[2][2]],
-    ) / determinant
-    const offset = determinant3(
-      [matrix[0][0], matrix[0][1], values[0]],
-      [matrix[1][0], matrix[1][1], values[1]],
-      [matrix[2][0], matrix[2][1], values[2]],
-    ) / determinant
-    return [x, y, offset] as const
-  }
-
-  const x = solve([target[0].x, target[1].x, target[2].x])
-  const y = solve([target[0].y, target[1].y, target[2].y])
-  return {
-    a: x[0],
-    b: y[0],
-    c: x[1],
-    d: y[1],
-    e: x[2],
-    f: y[2],
-  }
-}
+const yieldToBrowser = () =>
+  new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 const getHomography = (
   source: ScannerCorners,
@@ -163,55 +99,60 @@ const mapPoint = (
   point: ScannerPoint,
 ): ScannerPoint => {
   const divisor = homography.g * point.x + homography.h * point.y + 1
+  if (!Number.isFinite(divisor) || Math.abs(divisor) < 0.000001) {
+    throw new Error('No se pudo calcular una transformación de perspectiva válida.')
+  }
   return {
     x: (homography.a * point.x + homography.b * point.y + homography.c) / divisor,
     y: (homography.d * point.x + homography.e * point.y + homography.f) / divisor,
   }
 }
 
-const drawTriangle = (
-  context: CanvasRenderingContext2D,
-  source: CanvasImageSource,
-  sourceTriangle: readonly [ScannerPoint, ScannerPoint, ScannerPoint],
-  destinationTriangle: readonly [ScannerPoint, ScannerPoint, ScannerPoint],
+const clamp = (value: number, minimum: number, maximum: number) =>
+  Math.min(maximum, Math.max(minimum, value))
+
+const getSourceTileBounds = (
+  inverseHomography: ReturnType<typeof getHomography>,
+  destinationLeft: number,
+  destinationTop: number,
+  destinationRight: number,
+  destinationBottom: number,
   sourceWidth: number,
   sourceHeight: number,
 ) => {
-  const transform = solveAffine(sourceTriangle, destinationTriangle)
-  const sourceX = Math.min(...sourceTriangle.map((point) => point.x))
-  const sourceY = Math.min(...sourceTriangle.map((point) => point.y))
-  const sourceRight = Math.max(...sourceTriangle.map((point) => point.x))
-  const sourceBottom = Math.max(...sourceTriangle.map((point) => point.y))
-  const width = Math.max(1, sourceRight - sourceX)
-  const height = Math.max(1, sourceBottom - sourceY)
+  const mappedCorners = [
+    mapPoint(inverseHomography, { x: destinationLeft, y: destinationTop }),
+    mapPoint(inverseHomography, { x: destinationRight, y: destinationTop }),
+    mapPoint(inverseHomography, { x: destinationRight, y: destinationBottom }),
+    mapPoint(inverseHomography, { x: destinationLeft, y: destinationBottom }),
+  ]
+  const left = clamp(
+    Math.floor(Math.min(...mappedCorners.map((point) => point.x))) - SOURCE_SAMPLE_BORDER,
+    0,
+    sourceWidth - 1,
+  )
+  const top = clamp(
+    Math.floor(Math.min(...mappedCorners.map((point) => point.y))) - SOURCE_SAMPLE_BORDER,
+    0,
+    sourceHeight - 1,
+  )
+  const right = clamp(
+    Math.ceil(Math.max(...mappedCorners.map((point) => point.x))) + SOURCE_SAMPLE_BORDER,
+    0,
+    sourceWidth - 1,
+  )
+  const bottom = clamp(
+    Math.ceil(Math.max(...mappedCorners.map((point) => point.y))) + SOURCE_SAMPLE_BORDER,
+    0,
+    sourceHeight - 1,
+  )
 
-  context.save()
-  context.beginPath()
-  context.moveTo(destinationTriangle[0].x, destinationTriangle[0].y)
-  context.lineTo(destinationTriangle[1].x, destinationTriangle[1].y)
-  context.lineTo(destinationTriangle[2].x, destinationTriangle[2].y)
-  context.closePath()
-  context.clip()
-  context.setTransform(
-    transform.a,
-    transform.b,
-    transform.c,
-    transform.d,
-    transform.e,
-    transform.f,
-  )
-  context.drawImage(
-    source,
-    sourceX,
-    sourceY,
-    Math.min(width, sourceWidth - sourceX),
-    Math.min(height, sourceHeight - sourceY),
-    sourceX,
-    sourceY,
-    Math.min(width, sourceWidth - sourceX),
-    Math.min(height, sourceHeight - sourceY),
-  )
-  context.restore()
+  return {
+    height: Math.max(1, bottom - top + 1),
+    left,
+    top,
+    width: Math.max(1, right - left + 1),
+  }
 }
 
 export const renderPerspectiveCanvas = async (
@@ -231,65 +172,153 @@ export const renderPerspectiveCanvas = async (
   canvas.height = Math.max(1, Math.round(logicalSize.height * renderScale))
   const context = canvas.getContext('2d')
   if (!context) throw new Error('No se pudo crear la vista previa de perspectiva.')
+  const sourceTileCanvas = document.createElement('canvas')
+  const sourceTileContext = sourceTileCanvas.getContext('2d')
+  if (!sourceTileContext) {
+    canvas.width = 1
+    canvas.height = 1
+    throw new Error('No se pudo preparar la corrección de perspectiva.')
+  }
 
-  const scaleDestination = (point: ScannerPoint): ScannerPoint => ({
-    x: point.x * renderScale,
-    y: point.y * renderScale,
-  })
-  const destinationRight = Math.max(0, logicalSize.width - 1)
-  const destinationBottom = Math.max(0, logicalSize.height - 1)
+  const destinationRight = Math.max(0, canvas.width - 1)
+  const destinationBottom = Math.max(0, canvas.height - 1)
   const destinationCorners: ScannerCorners = [
     { x: 0, y: 0 },
     { x: destinationRight, y: 0 },
     { x: destinationRight, y: destinationBottom },
     { x: 0, y: destinationBottom },
   ]
-  const homography = getHomography(corners, destinationCorners)
-  const gridSegments = Math.min(
-    MAX_GRID_SEGMENTS,
-    Math.max(
-      MIN_GRID_SEGMENTS,
-      Math.ceil(Math.max(sourceWidth, sourceHeight) / GRID_PIXELS),
-    ),
-  )
+  const inverseHomography = getHomography(destinationCorners, corners)
+  const horizontalTiles = Math.ceil(canvas.width / REMAP_TILE_WIDTH)
+  const verticalTiles = Math.ceil(canvas.height / REMAP_TILE_HEIGHT)
+  const totalTiles = horizontalTiles * verticalTiles
+  let completedTiles = 0
 
   context.fillStyle = '#ffffff'
   context.fillRect(0, 0, canvas.width, canvas.height)
-  context.imageSmoothingEnabled = true
 
-  for (let row = 0; row < gridSegments; row += 1) {
-    throwIfExportAborted(options.signal)
-    for (let column = 0; column < gridSegments; column += 1) {
-      const sourceLeft = (column / gridSegments) * sourceWidth
-      const sourceRight = ((column + 1) / gridSegments) * sourceWidth
-      const sourceTop = (row / gridSegments) * sourceHeight
-      const sourceBottom = ((row + 1) / gridSegments) * sourceHeight
-      const topLeft = { x: sourceLeft, y: sourceTop }
-      const topRight = { x: sourceRight, y: sourceTop }
-      const bottomRight = { x: sourceRight, y: sourceBottom }
-      const bottomLeft = { x: sourceLeft, y: sourceBottom }
-      const destinationTopLeft = scaleDestination(mapPoint(homography, topLeft))
-      const destinationTopRight = scaleDestination(mapPoint(homography, topRight))
-      const destinationBottomRight = scaleDestination(mapPoint(homography, bottomRight))
-      const destinationBottomLeft = scaleDestination(mapPoint(homography, bottomLeft))
+  try {
+    for (let destinationTop = 0; destinationTop < canvas.height; destinationTop += REMAP_TILE_HEIGHT) {
+      const tileHeight = Math.min(REMAP_TILE_HEIGHT, canvas.height - destinationTop)
+      for (let destinationLeft = 0; destinationLeft < canvas.width; destinationLeft += REMAP_TILE_WIDTH) {
+        throwIfExportAborted(options.signal)
+        const tileWidth = Math.min(REMAP_TILE_WIDTH, canvas.width - destinationLeft)
+        const sourceBounds = getSourceTileBounds(
+          inverseHomography,
+          destinationLeft,
+          destinationTop,
+          destinationLeft + tileWidth - 1,
+          destinationTop + tileHeight - 1,
+          sourceWidth,
+          sourceHeight,
+        )
+        sourceTileCanvas.width = sourceBounds.width
+        sourceTileCanvas.height = sourceBounds.height
+        sourceTileContext.drawImage(
+          source,
+          sourceBounds.left,
+          sourceBounds.top,
+          sourceBounds.width,
+          sourceBounds.height,
+          0,
+          0,
+          sourceBounds.width,
+          sourceBounds.height,
+        )
+        const sourcePixels = sourceTileContext.getImageData(
+          0,
+          0,
+          sourceBounds.width,
+          sourceBounds.height,
+        ).data
+        const destinationImage = context.createImageData(tileWidth, tileHeight)
+        const destinationPixels = destinationImage.data
 
-      drawTriangle(
-        context,
-        source,
-        [topLeft, topRight, bottomRight],
-        [destinationTopLeft, destinationTopRight, destinationBottomRight],
-        sourceWidth,
-        sourceHeight,
-      )
-      drawTriangle(
-        context,
-        source,
-        [topLeft, bottomRight, bottomLeft],
-        [destinationTopLeft, destinationBottomRight, destinationBottomLeft],
-        sourceWidth,
-        sourceHeight,
-      )
+        for (let localY = 0; localY < tileHeight; localY += 1) {
+          const destinationY = destinationTop + localY
+          let sourceXNumerator =
+            inverseHomography.a * destinationLeft +
+            inverseHomography.b * destinationY +
+            inverseHomography.c
+          let sourceYNumerator =
+            inverseHomography.d * destinationLeft +
+            inverseHomography.e * destinationY +
+            inverseHomography.f
+          let sourceDivisor =
+            inverseHomography.g * destinationLeft +
+            inverseHomography.h * destinationY +
+            1
+
+          for (let localX = 0; localX < tileWidth; localX += 1) {
+            if (!Number.isFinite(sourceDivisor) || Math.abs(sourceDivisor) < 0.000001) {
+              throw new Error('No se pudo calcular una transformación de perspectiva válida.')
+            }
+            const sourceX = clamp(
+              sourceXNumerator / sourceDivisor,
+              0,
+              sourceWidth - 1,
+            )
+            const sourceY = clamp(
+              sourceYNumerator / sourceDivisor,
+              0,
+              sourceHeight - 1,
+            )
+            const sourceX0 = Math.floor(sourceX)
+            const sourceY0 = Math.floor(sourceY)
+            const sourceX1 = Math.min(sourceWidth - 1, sourceX0 + 1)
+            const sourceY1 = Math.min(sourceHeight - 1, sourceY0 + 1)
+            const horizontalRatio = sourceX - sourceX0
+            const verticalRatio = sourceY - sourceY0
+            const topLeftWeight = (1 - horizontalRatio) * (1 - verticalRatio)
+            const topRightWeight = horizontalRatio * (1 - verticalRatio)
+            const bottomLeftWeight = (1 - horizontalRatio) * verticalRatio
+            const bottomRightWeight = horizontalRatio * verticalRatio
+            const topLeftIndex = (
+              (sourceY0 - sourceBounds.top) * sourceBounds.width +
+              sourceX0 - sourceBounds.left
+            ) * 4
+            const topRightIndex = topLeftIndex + (sourceX1 - sourceX0) * 4
+            const bottomLeftIndex = topLeftIndex +
+              (sourceY1 - sourceY0) * sourceBounds.width * 4
+            const bottomRightIndex = bottomLeftIndex + (sourceX1 - sourceX0) * 4
+            const destinationIndex = (localY * tileWidth + localX) * 4
+            const alpha = (
+              sourcePixels[topLeftIndex + 3] * topLeftWeight +
+              sourcePixels[topRightIndex + 3] * topRightWeight +
+              sourcePixels[bottomLeftIndex + 3] * bottomLeftWeight +
+              sourcePixels[bottomRightIndex + 3] * bottomRightWeight
+            ) / 255
+
+            for (let channel = 0; channel < 3; channel += 1) {
+              const premultiplied = (
+                sourcePixels[topLeftIndex + channel] * sourcePixels[topLeftIndex + 3] * topLeftWeight +
+                sourcePixels[topRightIndex + channel] * sourcePixels[topRightIndex + 3] * topRightWeight +
+                sourcePixels[bottomLeftIndex + channel] * sourcePixels[bottomLeftIndex + 3] * bottomLeftWeight +
+                sourcePixels[bottomRightIndex + channel] * sourcePixels[bottomRightIndex + 3] * bottomRightWeight
+              ) / 255
+              destinationPixels[destinationIndex + channel] =
+                premultiplied + 255 * (1 - alpha)
+            }
+            destinationPixels[destinationIndex + 3] = 255
+            sourceXNumerator += inverseHomography.a
+            sourceYNumerator += inverseHomography.d
+            sourceDivisor += inverseHomography.g
+          }
+        }
+
+        context.putImageData(destinationImage, destinationLeft, destinationTop)
+        completedTiles += 1
+        if (completedTiles < totalTiles) await yieldToBrowser()
+      }
     }
+    throwIfExportAborted(options.signal)
+  } catch (error) {
+    canvas.width = 1
+    canvas.height = 1
+    throw error
+  } finally {
+    sourceTileCanvas.width = 1
+    sourceTileCanvas.height = 1
   }
 
   return {

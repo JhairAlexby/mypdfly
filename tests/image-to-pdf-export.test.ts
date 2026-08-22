@@ -278,6 +278,46 @@ test('renderiza una perspectiva local a partir de esquinas manuales', async () =
   identity.canvas.height = 1
 })
 
+test('renderiza una perspectiva continua sin costuras de la malla', async () => {
+  const source = createCanvas(960, 640)
+  const sourceContext = source.getContext('2d')
+  sourceContext.fillStyle = '#2563eb'
+  sourceContext.fillRect(0, 0, source.width, source.height)
+  const corners = [
+    { x: 180, y: 70 },
+    { x: 820, y: 155 },
+    { x: 900, y: 590 },
+    { x: 80, y: 520 },
+  ] as const
+
+  const perspective = await renderPerspectiveCanvas(
+    source,
+    source.width,
+    source.height,
+    corners,
+  )
+  const context = perspective.canvas.getContext('2d')
+  const inset = 4
+  const pixels = context.getImageData(
+    inset,
+    inset,
+    perspective.canvas.width - inset * 2,
+    perspective.canvas.height - inset * 2,
+  ).data
+
+  let seamPixels = 0
+  for (let index = 0; index < pixels.length; index += 4) {
+    const red = pixels[index]
+    const green = pixels[index + 1]
+    const blue = pixels[index + 2]
+    if (red > 80 || green > 130 || blue < 180) seamPixels += 1
+  }
+
+  assert.equal(seamPixels, 0)
+  perspective.canvas.width = 1
+  perspective.canvas.height = 1
+})
+
 test('integra la perspectiva activa en el PDF con el tamaño real del recorte', async () => {
   const file = createSourceFile()
   const corners = [
@@ -336,6 +376,106 @@ test('integra la perspectiva activa en el PDF con el tamaño real del recorte', 
     assert.ok(Math.max(red, green, blue) - Math.min(red, green, blue) <= 5)
   }
   await loadingTask.destroy()
+})
+
+test('conserva una perspectiva continua dentro del PDF rasterizado', async () => {
+  const source = createCanvas(960, 640)
+  const sourceContext = source.getContext('2d')
+  sourceContext.fillStyle = '#2563eb'
+  sourceContext.fillRect(0, 0, source.width, source.height)
+  const file = new File([source.toBuffer('image/png')], 'scanner-uniform.png', {
+    type: 'image/png',
+  })
+  const corners = [
+    { x: 180, y: 70 },
+    { x: 820, y: 155 },
+    { x: 900, y: 590 },
+    { x: 80, y: 520 },
+  ] as const
+  const item: ImageDocumentItem = {
+    file,
+    filter: 'original',
+    height: source.height,
+    id: 'scanner-continuous-pdf',
+    previewUrl: 'blob:scanner-continuous-pdf',
+    rotation: 0,
+    scanner: {
+      ...createImageScannerState(source.width, source.height),
+      active: true,
+      corners,
+      detected: true,
+    },
+    width: source.width,
+  }
+
+  const blob = await createImagesPdf([item], {
+    fitMode: 'stretch',
+    marginMm: 0,
+    pagePreset: 'image',
+  })
+  const loadingTask = getDocument({
+    data: new Uint8Array(await blob.arrayBuffer()),
+    disableWorker: true,
+  })
+  const pdf = await loadingTask.promise
+  const page = await pdf.getPage(1)
+  const viewport = page.getViewport({ scale: 4 / 3 })
+  const rendered = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
+  await page.render({
+    background: '#ffffff',
+    canvas: rendered as unknown as HTMLCanvasElement,
+    viewport,
+  }).promise
+
+  const inset = 5
+  const pixels = rendered.getContext('2d').getImageData(
+    inset,
+    inset,
+    rendered.width - inset * 2,
+    rendered.height - inset * 2,
+  ).data
+  let seamPixels = 0
+  for (let index = 0; index < pixels.length; index += 4) {
+    const red = pixels[index]
+    const green = pixels[index + 1]
+    const blue = pixels[index + 2]
+    if (red > 80 || green > 130 || blue < 180) seamPixels += 1
+  }
+
+  assert.equal(seamPixels, 0)
+  await loadingTask.destroy()
+})
+
+test('cancela el remapeo de perspectiva entre bloques y libera sus lienzos', async () => {
+  const source = createCanvas(2000, 1200)
+  const sourceContext = source.getContext('2d')
+  sourceContext.fillStyle = '#2563eb'
+  sourceContext.fillRect(0, 0, source.width, source.height)
+  const controller = new AbortController()
+  createdDocumentCanvases.length = 0
+
+  const rendering = renderPerspectiveCanvas(
+    source,
+    source.width,
+    source.height,
+    [
+      { x: 120, y: 80 },
+      { x: 1880, y: 130 },
+      { x: 1940, y: 1120 },
+      { x: 70, y: 1080 },
+    ],
+    { signal: controller.signal },
+  )
+  queueMicrotask(() => controller.abort())
+
+  await assert.rejects(
+    rendering,
+    (error: unknown) => error instanceof Error && error.name === 'ExportCancelledError',
+  )
+  assert.ok(
+    createdDocumentCanvases.length === 2 &&
+    createdDocumentCanvases.every((canvas) => canvas.width === 1 && canvas.height === 1),
+  )
 })
 
 test('procesa un lote grande secuencialmente sin perder páginas ni progreso', async () => {

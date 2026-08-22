@@ -104,6 +104,7 @@ export function ComposerWorkspace({
   selectedPlacementId,
 }: ComposerWorkspaceProps) {
   const surfaceRef = useRef<HTMLDivElement>(null)
+  const printableRef = useRef<HTMLDivElement>(null)
   const interactionRef = useRef<Interaction | null>(null)
   const [draft, setDraft] = useState<DraftPlacement | null>(null)
   const assetsById = useMemo(
@@ -123,8 +124,9 @@ export function ComposerWorkspace({
   ) => {
     if (disabled) return
     const surface = surfaceRef.current
-    if (!surface) return
-    const bounds = surface.getBoundingClientRect()
+    const printable = printableRef.current
+    if (!surface || !printable) return
+    const bounds = printable.getBoundingClientRect()
     if (!bounds.width || !bounds.height) return
     event.preventDefault()
     event.stopPropagation()
@@ -145,15 +147,17 @@ export function ComposerWorkspace({
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const interaction = interactionRef.current
     const surface = surfaceRef.current
+    const printable = printableRef.current
     if (
       disabled ||
       !interaction ||
       interaction.pointerId !== event.pointerId ||
-      !surface
+      !surface ||
+      !printable
     ) {
       return
     }
-    const bounds = surface.getBoundingClientRect()
+    const bounds = printable.getBoundingClientRect()
     if (!bounds.width || !bounds.height) return
     const point = getNormalizedPointer(event, bounds)
     const nextRect =
@@ -207,7 +211,12 @@ export function ComposerWorkspace({
   }
 
   const handleSurfacePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.target === event.currentTarget) onSelectPlacement(null)
+    if (
+      event.target === event.currentTarget ||
+      event.target === printableRef.current
+    ) {
+      onSelectPlacement(null)
+    }
   }
 
   const marginX = (page.marginMm / pageSize.width) * 100
@@ -303,6 +312,7 @@ export function ComposerWorkspace({
         onPointerCancel={finishInteraction}
       >
         <div
+          ref={printableRef}
           className="absolute overflow-visible bg-white"
           style={{
             height: String(100 - marginY * 2) + '%',

@@ -268,3 +268,36 @@ test('conserva la proporción y aplica el tamaño mínimo al redimensionar', () 
   assert.equal(expanded.width / expanded.height, 2)
   assert.equal(reduced.width / reduced.height, 2)
 })
+
+test('permite reducir una colocación cuando el mínimo solicitado no cabe junto al borde', () => {
+  const rect = { height: 0.2, width: 0.05, x: 0.95, y: 0.2 }
+  const resized = resizePlacementFromCorner(
+    rect,
+    'top-right',
+    { x: 0.96, y: 0.25 },
+    { minHeight: 0.1, minWidth: 0.1 },
+  )
+
+  assert.ok(resized.width > 0 && resized.width < rect.width)
+  assert.ok(resized.height > 0 && resized.height < rect.height)
+  assertClose(resized.x, rect.x)
+  assertClose(resized.y + resized.height, rect.y + rect.height)
+  assert.equal(isNormalizedPlacementRect(resized), true)
+})
+
+test('permite reducir con proporción bloqueada aunque el mínimo proporcional no quepa', () => {
+  const rect = { height: 0.1, width: 0.05, x: 0.95, y: 0.8 }
+  const resized = resizePlacementFromCorner(
+    rect,
+    'bottom-right',
+    { x: 0.96, y: 0.85 },
+    { lockAspectRatio: true, minHeight: 0.2, minWidth: 0.2 },
+  )
+
+  assert.ok(resized.width > 0 && resized.width < rect.width)
+  assert.ok(resized.height > 0 && resized.height < rect.height)
+  assertClose(resized.width / resized.height, rect.width / rect.height)
+  assertClose(resized.x, rect.x)
+  assertClose(resized.y, rect.y)
+  assert.equal(isNormalizedPlacementRect(resized), true)
+})

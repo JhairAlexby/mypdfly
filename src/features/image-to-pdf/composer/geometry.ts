@@ -179,10 +179,11 @@ export const resizePlacementFromCorner = (
       maximumHeight,
       maximumWidth / aspectRatio,
     )
-    const minimumHeightOnRatio = Math.min(
-      Math.max(minHeight, minWidth / aspectRatio),
-      maximumHeightOnRatio,
-    )
+    const requestedMinimumHeight = Math.max(minHeight, minWidth / aspectRatio)
+    const minimumHeightOnRatio =
+      maximumHeightOnRatio < requestedMinimumHeight
+        ? Math.min(maximumHeightOnRatio, Number.EPSILON)
+        : requestedMinimumHeight
     height = clamp(
       desiredHeightOnRatio,
       minimumHeightOnRatio,
@@ -190,12 +191,14 @@ export const resizePlacementFromCorner = (
     )
     width = height * aspectRatio
   } else {
-    width = clamp(desiredWidth, Math.min(minWidth, maximumWidth), maximumWidth)
-    height = clamp(
-      desiredHeight,
-      Math.min(minHeight, maximumHeight),
-      maximumHeight,
-    )
+    const effectiveMinWidth =
+      maximumWidth < minWidth ? Math.min(maximumWidth, Number.EPSILON) : minWidth
+    const effectiveMinHeight =
+      maximumHeight < minHeight
+        ? Math.min(maximumHeight, Number.EPSILON)
+        : minHeight
+    width = clamp(desiredWidth, effectiveMinWidth, maximumWidth)
+    height = clamp(desiredHeight, effectiveMinHeight, maximumHeight)
   }
 
   return {

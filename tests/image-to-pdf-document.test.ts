@@ -205,7 +205,7 @@ test('aplica cada preset directamente a píxeles y conserva el canal alfa', () =
   assert.ok(blackAndWhiteContrast > cleanDocumentContrast)
 })
 
-test('edita esquinas sin mutar páginas y solo activa la perspectiva al confirmarla', () => {
+test('edita esquinas sin mutar páginas y conserva si la perspectiva ya estaba activa', () => {
   const items = [createItem('one'), createItem('two')]
   const corners = [
     { x: 8, y: 10 },
@@ -214,18 +214,27 @@ test('edita esquinas sin mutar páginas y solo activa la perspectiva al confirma
     { x: 5, y: 90 },
   ] as const
 
-  const edited = setScannerCorners(items, 'one', corners)
-  assert.equal(edited[0]?.scanner.active, false)
-  assert.equal(edited[0]?.scanner.detected, false)
-  assert.deepEqual(edited[0]?.scanner.corners, corners)
+  const inactiveEdited = setScannerCorners(items, 'one', corners)
+  assert.equal(inactiveEdited[0]?.scanner.active, false)
+  assert.equal(inactiveEdited[0]?.scanner.detected, false)
+  assert.deepEqual(inactiveEdited[0]?.scanner.corners, corners)
   assert.deepEqual(items[0]?.scanner.corners, createImageScannerState(100, 100).corners)
 
-  const applied = setScannerState(edited, 'one', {
-    ...edited[0]!.scanner,
+  const applied = setScannerState(inactiveEdited, 'one', {
+    ...inactiveEdited[0]!.scanner,
     active: true,
+    confidence: 0.85,
+    detected: true,
   })
+  const activeEdited = setScannerCorners(applied, 'one', corners)
+
+  assert.equal(activeEdited[0]?.scanner.active, true)
+  assert.equal(activeEdited[0]?.scanner.detected, false)
+  assert.equal(activeEdited[0]?.scanner.confidence, 0.85)
+  assert.deepEqual(activeEdited[0]?.scanner.corners, corners)
   assert.equal(applied[0]?.scanner.active, true)
-  assert.equal(edited[0]?.scanner.active, false)
+  assert.equal(applied[0]?.scanner.detected, true)
+  assert.equal(inactiveEdited[0]?.scanner.active, false)
 })
 
 test('calcula páginas A4 y Carta según la orientación de cada imagen', () => {

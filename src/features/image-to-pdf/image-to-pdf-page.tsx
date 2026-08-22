@@ -168,6 +168,7 @@ function ScannerPerspectivePreview({ item }: { readonly item: ImageDocumentItem 
     let disposed = false
     let loadedImage: DecodedImageSource | null = null
     let perspective: Awaited<ReturnType<typeof renderPerspectiveCanvas>> | null = null
+    const controller = new AbortController()
 
     const clearCanvas = () => {
       const canvas = canvasRef.current
@@ -183,12 +184,13 @@ function ScannerPerspectivePreview({ item }: { readonly item: ImageDocumentItem 
       }
 
       try {
-        loadedImage = await decodeImageFile(item.file)
+        loadedImage = await decodeImageFile(item.file, controller.signal)
         perspective = await renderPerspectiveCanvas(
           loadedImage.source,
           loadedImage.width,
           loadedImage.height,
           item.scanner.corners,
+          { signal: controller.signal },
         )
         if (disposed) return
 
@@ -199,7 +201,7 @@ function ScannerPerspectivePreview({ item }: { readonly item: ImageDocumentItem 
         canvas.height = perspective.canvas.height
         context.drawImage(perspective.canvas, 0, 0)
       } catch {
-        clearCanvas()
+        if (!disposed) clearCanvas()
       } finally {
         if (perspective) {
           perspective.canvas.width = 1
@@ -212,12 +214,7 @@ function ScannerPerspectivePreview({ item }: { readonly item: ImageDocumentItem 
     void render()
     return () => {
       disposed = true
-      clearCanvas()
-      if (perspective) {
-        perspective.canvas.width = 1
-        perspective.canvas.height = 1
-      }
-      loadedImage?.close()
+      controller.abort()
     }
   }, [item.file, item.scanner.active, item.scanner.corners])
 
@@ -495,6 +492,16 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
     setItems((currentItems) => setScannerState(currentItems, id, scanner))
   }
 
+  const markScannerCornersAsManual = (perspectiveActive: boolean) => {
+    setScannerStatus('idle')
+    setScannerStage(null)
+    setScannerMessage(
+      perspectiveActive
+        ? 'Esquinas ajustadas manualmente; la perspectiva continúa aplicada.'
+        : 'Esquinas ajustadas manualmente. Pulsa “Aplicar perspectiva” para activarla.',
+    )
+  }
+
   const handleScannerPointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (!activeScannerItem || draggingCornerIndex === null || isBusy) return
     const bounds = event.currentTarget.getBoundingClientRect()
@@ -515,6 +522,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
       ) as unknown as ScannerCorners
       return setScannerCorners(currentItems, item.id, corners)
     })
+    markScannerCornersAsManual(activeScannerItem.scanner.active)
   }
 
   const handleScannerPointerUp = () => setDraggingCornerIndex(null)
@@ -1114,6 +1122,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                                 ) as unknown as ScannerCorners
                                 return setScannerCorners(currentItems, item.id, corners)
                               })
+                              markScannerCornersAsManual(activeScannerItem.scanner.active)
                             }}
                           />
                           <text

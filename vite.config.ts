@@ -9,10 +9,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         app: path.resolve(import.meta.dirname, 'index.html'),
-        imageScanner: path.resolve(
-          import.meta.dirname,
-          'experiments/image-scanner/index.html',
-        ),
       },
     },
   },

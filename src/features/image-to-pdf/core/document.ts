@@ -256,7 +256,7 @@ export const setScannerCorners = (
           ...item,
           scanner: {
             ...item.scanner,
-            active: false,
+            active: item.scanner.active,
             corners,
             detected: false,
           },

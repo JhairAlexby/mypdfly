@@ -36,7 +36,7 @@ export const MAX_TOTAL_IMAGE_PIXELS = 100_000_000
 
 export type ImageMimeType = (typeof IMAGE_MIME_TYPES)[number]
 
-export type ImageDocumentItem = {
+export type ImageAsset = {
   readonly id: string
   readonly file: File
   readonly filter: ImageFilter
@@ -46,6 +46,12 @@ export type ImageDocumentItem = {
   readonly height: number
   readonly rotation: 0 | 90 | 180 | 270
 }
+
+/**
+ * @deprecated Use ImageAsset. The legacy name is kept while the current
+ * one-image-per-page workflow is migrated to the composition model.
+ */
+export type ImageDocumentItem = ImageAsset
 
 export type ImageValidationCode =
   | 'empty-file'

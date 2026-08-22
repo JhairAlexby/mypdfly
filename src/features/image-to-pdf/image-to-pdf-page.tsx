@@ -69,6 +69,14 @@ import {
   type PdfMarginMm,
   type PdfPagePreset,
 } from './core/pdf-export'
+import { createAutoLayoutPages } from './composer/auto-layout'
+import { ComposerWorkspace } from './composer/composer-workspace'
+import { createCompositionPdf } from './composer/page-compositor'
+import type {
+  CompositionPageOrientation,
+  ImageCompositionPage,
+  NormalizedPlacementRect,
+} from './composer/model'
 import type {
   ImageScannerState,
   ScannerCorners,
@@ -120,6 +128,8 @@ type ExportState =
   | { readonly status: 'cancelled' | 'error'; readonly progress: number }
 
 const initialExportState: ExportState = { progress: 0, status: 'idle' }
+
+type CompositionMode = 'single' | 'sheet'
 
 const createScannerInput = async (file: File) => {
   const image = await decodeImageFile(file)
@@ -252,6 +262,11 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
   const [pagePreset, setPagePreset] = useState<PdfPagePreset>('a4')
   const [marginMm, setMarginMm] = useState<PdfMarginMm>(10)
   const [fitMode, setFitMode] = useState<PdfFitMode>('contain')
+  const [compositionMode, setCompositionMode] = useState<CompositionMode>('single')
+  const [compositionPages, setCompositionPages] = useState<readonly ImageCompositionPage[]>([])
+  const [activeCompositionPageId, setActiveCompositionPageId] = useState<string | null>(null)
+  const [selectedPlacementId, setSelectedPlacementId] = useState<string | null>(null)
+  const [compositionOrientation, setCompositionOrientation] = useState<CompositionPageOrientation>('portrait')
   const [exportState, setExportState] = useState<ExportState>(initialExportState)
   const [exportError, setExportError] = useState('')
   const [activeScannerItemId, setActiveScannerItemId] = useState<string | null>(null)
@@ -272,6 +287,23 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
     exportState.status === 'running' || exportState.status === 'cancelling'
   const isScanning = scannerStatus === 'detecting'
   const isBusy = isExporting || isScanning
+  const compositionPreset = pagePreset === 'image' ? 'a4' : pagePreset
+
+  const buildCompositionPages = (
+    assetSet: readonly ImageDocumentItem[] = items,
+  ) =>
+    createAutoLayoutPages(assetSet, {
+      marginMm,
+      orientation: compositionOrientation,
+      preset: compositionPreset,
+    })
+
+  const activeCompositionPage =
+    compositionPages.find((page) => page.id === activeCompositionPageId) ??
+    compositionPages[0]
+  const activeCompositionPageIndex = activeCompositionPage
+    ? compositionPages.findIndex((page) => page.id === activeCompositionPage.id)
+    : -1
 
   useEffect(() => {
     itemsRef.current = items
@@ -289,6 +321,89 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
 
   const openFilePicker = () => {
     if (!isReading && !isBusy) inputRef.current?.click()
+  }
+
+  const enableCompositionMode = () => {
+    if (!items.length || isBusy) return
+    const nextPages = buildCompositionPages(items)
+    setCompositionPages(nextPages)
+    setActiveCompositionPageId(nextPages[0]?.id ?? null)
+    setSelectedPlacementId(null)
+    setCompositionMode('sheet')
+    if (pagePreset === 'image') setPagePreset('a4')
+  }
+
+  const disableCompositionMode = () => {
+    if (isBusy) return
+    setCompositionMode('single')
+    setSelectedPlacementId(null)
+  }
+
+  const autoLayoutComposition = () => {
+    if (isBusy || !items.length) return
+    const nextPages = buildCompositionPages(items)
+    setCompositionPages(nextPages)
+    setActiveCompositionPageId(nextPages[0]?.id ?? null)
+    setSelectedPlacementId(null)
+  }
+
+  const updateCompositionPlacement = (
+    placementId: string,
+    rect: NormalizedPlacementRect,
+  ) => {
+    if (isBusy || !activeCompositionPage) return
+    setCompositionPages((currentPages) =>
+      currentPages.map((page) =>
+        page.id !== activeCompositionPage.id
+          ? page
+          : {
+              ...page,
+              placements: page.placements.map((placement) =>
+                placement.id === placementId
+                  ? { ...placement, ...rect }
+                  : placement,
+              ),
+            },
+      ),
+    )
+  }
+
+  const updateCompositionOrientation = (
+    orientation: CompositionPageOrientation,
+  ) => {
+    if (isBusy) return
+    setCompositionOrientation(orientation)
+    setCompositionPages((currentPages) =>
+      currentPages.map((page) => ({ ...page, orientation })),
+    )
+  }
+
+  const updatePagePreset = (nextPreset: PdfPagePreset) => {
+    if (compositionMode === 'sheet' && nextPreset === 'image') return
+    setPagePreset(nextPreset)
+    if (compositionMode !== 'sheet' || nextPreset === 'image') return
+    setCompositionPages((currentPages) =>
+      currentPages.map((page) => ({ ...page, preset: nextPreset })),
+    )
+  }
+
+  const updatePageMargin = (nextMargin: PdfMarginMm) => {
+    setMarginMm(nextMargin)
+    if (compositionMode !== 'sheet') return
+    setCompositionPages((currentPages) =>
+      currentPages.map((page) => ({ ...page, marginMm: nextMargin })),
+    )
+  }
+
+  const moveCompositionPage = (direction: -1 | 1) => {
+    if (isBusy || !compositionPages.length) return
+    const currentIndex = activeCompositionPageIndex < 0 ? 0 : activeCompositionPageIndex
+    const nextIndex = Math.min(
+      compositionPages.length - 1,
+      Math.max(0, currentIndex + direction),
+    )
+    setActiveCompositionPageId(compositionPages[nextIndex]?.id ?? null)
+    setSelectedPlacementId(null)
   }
 
   const addFiles = async (fileList: FileList | readonly File[]) => {
@@ -340,6 +455,12 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
     }
 
     setItems(nextItems)
+    if (compositionMode === 'sheet' && nextItems.length !== items.length) {
+      const nextPages = buildCompositionPages(nextItems)
+      setCompositionPages(nextPages)
+      setActiveCompositionPageId(nextPages[0]?.id ?? null)
+      setSelectedPlacementId(null)
+    }
     setErrors(nextErrors)
     setIsReading(false)
   }
@@ -367,7 +488,21 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
     const item = items.find((candidate) => candidate.id === id)
     if (!item) return
     URL.revokeObjectURL(item.previewUrl)
-    setItems(removeImage(items, id))
+    const nextItems = removeImage(items, id)
+    setItems(nextItems)
+    if (compositionMode === 'sheet') {
+      if (!nextItems.length) {
+        setCompositionMode('single')
+        setCompositionPages([])
+        setActiveCompositionPageId(null)
+        setSelectedPlacementId(null)
+      } else {
+        const nextPages = buildCompositionPages(nextItems)
+        setCompositionPages(nextPages)
+        setActiveCompositionPageId(nextPages[0]?.id ?? null)
+        setSelectedPlacementId(null)
+      }
+    }
   }
 
   const rotateItem = (id: string) => {
@@ -404,6 +539,10 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
     items.forEach((item) => URL.revokeObjectURL(item.previewUrl))
     setItems([])
     setErrors([])
+    setCompositionMode('single')
+    setCompositionPages([])
+    setActiveCompositionPageId(null)
+    setSelectedPlacementId(null)
   }
 
   const handleDragStart = (event: DragEvent<HTMLElement>, id: string) => {
@@ -436,27 +575,44 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
   }
 
   const exportPdf = async () => {
-    if (!items.length || isBusy) return
+    const isSheetComposition = compositionMode === 'sheet'
+    if (
+      !items.length ||
+      isBusy ||
+      (isSheetComposition && !compositionPages.length)
+    ) {
+      return
+    }
 
     const controller = new AbortController()
     exportControllerRef.current = controller
+    const totalPages = isSheetComposition ? compositionPages.length : items.length
     setExportError('')
     setExportState({
       currentPage: 0,
       progress: 0,
       stage: 'rendering',
       status: 'running',
-      totalPages: items.length,
+      totalPages,
     })
 
     try {
-      const blob = await createImagesPdf(items, {
-        fitMode,
-        marginMm,
-        onProgress: handleExportProgress,
-        pagePreset,
-        signal: controller.signal,
-      })
+      const blob = isSheetComposition
+        ? await createCompositionPdf(
+            { assets: items, pages: compositionPages },
+            {
+              fitMode,
+              onProgress: handleExportProgress,
+              signal: controller.signal,
+            },
+          )
+        : await createImagesPdf(items, {
+            fitMode,
+            marginMm,
+            onProgress: handleExportProgress,
+            pagePreset,
+            signal: controller.signal,
+          })
       downloadBlob(blob, 'imagenes-a-pdf.pdf')
       setExportState({ progress: 1, status: 'success' })
     } catch (error) {
@@ -627,7 +783,9 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
           : 'No se encontró un documento con suficiente confianza. Revisa las esquinas manualmente.',
       )
     } catch (error) {
-      const wasCancelled = error instanceof Error && error.name === 'ScannerCancelledError'
+      const wasCancelled =
+        controller.signal.aborted ||
+        (error instanceof Error && error.name === 'ScannerCancelledError')
       setScannerStage(null)
       setScannerStatus(wasCancelled ? 'idle' : 'error')
       setScannerMessage(
@@ -773,17 +931,52 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
           )}
 
           {items.length > 0 && (
-            <section aria-labelledby="image-pages-title">
-              <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+            <section
+              aria-labelledby="composition-mode-title"
+              data-testid="composition-mode"
+              className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
-                  <h2 id="image-pages-title" className="text-base font-semibold text-slate-950">
-                    {items.length} {items.length === 1 ? 'página' : 'páginas'}
+                  <h2 id="composition-mode-title" className="text-sm font-semibold text-slate-950">
+                    Distribución del PDF
                   </h2>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    {formatFileSize(totalBytes)} · arrastra o usa las flechas para ordenar
+                  <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-500">
+                    Elige si cada imagen ocupa una página o si varias comparten una hoja editable.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={compositionMode === 'single' ? 'default' : 'outline'}
+                    className="rounded-lg"
+                    aria-pressed={compositionMode === 'single'}
+                    onClick={disableCompositionMode}
+                    disabled={isBusy}
+                  >
+                    Una imagen por página
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={compositionMode === 'sheet' ? 'default' : 'outline'}
+                    className="rounded-lg"
+                    aria-pressed={compositionMode === 'sheet'}
+                    onClick={enableCompositionMode}
+                    disabled={isBusy}
+                  >
+                    Varias imágenes por hoja
+                  </Button>
+                </div>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3">
+                <p className="text-xs text-slate-500">
+                  {compositionMode === 'sheet'
+                    ? `${compositionPages.length} ${compositionPages.length === 1 ? 'hoja' : 'hojas'} · arrastra y redimensiona cada imagen en el editor.`
+                    : `${items.length} ${items.length === 1 ? 'imagen lista' : 'imágenes listas'} para ordenar.`}
+                </p>
+                <div className="flex items-center gap-2">
                   <Button
                     type="button"
                     variant="outline"
@@ -801,9 +994,25 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                     size="sm"
                     className="rounded-lg text-slate-500 hover:text-red-700"
                     onClick={clearDocument}
+                    disabled={isBusy}
                   >
                     Vaciar
                   </Button>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {items.length > 0 && compositionMode === 'single' && (
+            <section aria-labelledby="image-pages-title">
+              <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h2 id="image-pages-title" className="text-base font-semibold text-slate-950">
+                    {items.length} {items.length === 1 ? 'página' : 'páginas'}
+                  </h2>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {formatFileSize(totalBytes)} · arrastra o usa las flechas para ordenar
+                  </p>
                 </div>
               </div>
 
@@ -917,6 +1126,24 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                 ))}
               </div>
             </section>
+          )}
+
+          {compositionMode === 'sheet' && activeCompositionPage && (
+            <ComposerWorkspace
+              key={activeCompositionPage.id}
+              assets={items}
+              disabled={isBusy}
+              onAutoLayout={autoLayoutComposition}
+              onChangeOrientation={updateCompositionOrientation}
+              onChangePlacement={updateCompositionPlacement}
+              onNextPage={() => moveCompositionPage(1)}
+              onPreviousPage={() => moveCompositionPage(-1)}
+              onSelectPlacement={setSelectedPlacementId}
+              page={activeCompositionPage}
+              pageCount={compositionPages.length}
+              pageIndex={activeCompositionPageIndex < 0 ? 0 : activeCompositionPageIndex}
+              selectedPlacementId={selectedPlacementId}
+            />
           )}
 
           {items.length > 0 && activeFilterItem && (
@@ -1246,12 +1473,14 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                     aria-label="Tamaño de página"
                     className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm font-normal text-slate-900 outline-none focus:border-slate-400 focus:ring-3 focus:ring-slate-200"
                     value={pagePreset}
-                    onChange={(event) => setPagePreset(event.target.value as PdfPagePreset)}
+                    onChange={(event) => updatePagePreset(event.target.value as PdfPagePreset)}
                     disabled={isBusy}
                   >
                     <option value="a4">A4</option>
                     <option value="letter">Carta / Letter</option>
-                    <option value="image">Tamaño de imagen</option>
+                    <option value="image" disabled={compositionMode === 'sheet'}>
+                      Tamaño de imagen
+                    </option>
                   </select>
                 </label>
                 <label className="grid gap-1.5 text-xs font-medium text-slate-600">
@@ -1260,7 +1489,7 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
                     aria-label="Márgenes"
                     className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-sm font-normal text-slate-900 outline-none focus:border-slate-400 focus:ring-3 focus:ring-slate-200"
                     value={String(marginMm)}
-                    onChange={(event) => setMarginMm(Number(event.target.value) as PdfMarginMm)}
+                    onChange={(event) => updatePageMargin(Number(event.target.value) as PdfMarginMm)}
                     disabled={isBusy}
                   >
                     <option value="0">Sin margen</option>
@@ -1287,7 +1516,9 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
               </div>
 
               <p className="mt-3 text-xs text-slate-500">
-                {pagePreset === 'image'
+                {compositionMode === 'sheet'
+                  ? 'Las imágenes se colocan dentro de la hoja y conservan su proporción; puedes ajustar cada una en el editor.'
+                  : pagePreset === 'image'
                   ? 'El tamaño de cada página se calcula a partir de sus píxeles y respeta los márgenes elegidos.'
                   : 'La orientación se adapta automáticamente a la orientación dominante de cada imagen.'}
               </p>

@@ -34,6 +34,8 @@ export type CompositionCanvasFactory = (
 export type CompositionRenderOptions = {
   readonly canvasFactory?: CompositionCanvasFactory
   readonly fitMode?: CompositionFitMode
+  /** Reports normalized progress while the placements of one sheet are rendered. */
+  readonly onPageProgress?: (progress: number) => void
   readonly renderScale?: number
   readonly signal?: AbortSignal
 }
@@ -331,6 +333,9 @@ export const renderCompositionPage = async (
   const context = getCanvasContext(canvas)
   const preparedAssets = new Map<string, PreparedCompositionAsset>()
   const remainingReferences = new Map<string, number>()
+  const placementsInPaintOrder = getPlacementsInPaintOrder(page.placements)
+  const totalPlacements = placementsInPaintOrder.length
+  options.onPageProgress?.(totalPlacements ? 0 : 1)
   for (const placement of page.placements) {
     remainingReferences.set(
       placement.assetId,
@@ -343,7 +348,7 @@ export const renderCompositionPage = async (
     context.fillStyle = '#ffffff'
     context.fillRect(0, 0, canvas.width, canvas.height)
 
-    for (const placement of getPlacementsInPaintOrder(page.placements)) {
+    for (const [placementIndex, placement] of placementsInPaintOrder.entries()) {
       throwIfExportAborted(signal)
       let prepared = preparedAssets.get(placement.assetId)
       if (!prepared) {
@@ -367,6 +372,7 @@ export const renderCompositionPage = async (
         prepared.close()
         preparedAssets.delete(placement.assetId)
       }
+      options.onPageProgress?.((placementIndex + 1) / totalPlacements)
     }
     throwIfExportAborted(signal)
 
@@ -417,11 +423,23 @@ export const createCompositionPdf = async (
       stage: 'rendering',
       totalPages: composition.pages.length,
     })
-    const renderedPage = await renderCompositionPage(
-      pageDefinition,
-      composition.assets,
-      options,
-    )
+    const renderedPage = await renderCompositionPage(pageDefinition, composition.assets, {
+      canvasFactory: options.canvasFactory,
+      fitMode: options.fitMode,
+      onPageProgress: (pageProgress) => {
+        const normalizedPageProgress = Math.min(1, Math.max(0, pageProgress))
+        options.onProgress?.({
+          currentPage: index + 1,
+          progress:
+            ((index + normalizedPageProgress) / composition.pages.length) *
+            RENDER_PROGRESS_MAX,
+          stage: 'rendering',
+          totalPages: composition.pages.length,
+        })
+      },
+      renderScale: options.renderScale,
+      signal: options.signal,
+    })
     try {
       throwIfExportAborted(options.signal)
       const imageBlob = await canvasToPng(renderedPage.canvas)

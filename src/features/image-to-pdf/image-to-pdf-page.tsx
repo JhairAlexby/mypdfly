@@ -783,7 +783,9 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
           : 'No se encontró un documento con suficiente confianza. Revisa las esquinas manualmente.',
       )
     } catch (error) {
-      const wasCancelled = error instanceof Error && error.name === 'ScannerCancelledError'
+      const wasCancelled =
+        controller.signal.aborted ||
+        (error instanceof Error && error.name === 'ScannerCancelledError')
       setScannerStage(null)
       setScannerStatus(wasCancelled ? 'idle' : 'error')
       setScannerMessage(

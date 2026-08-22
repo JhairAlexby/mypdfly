@@ -20,6 +20,7 @@ import {
 } from '../src/features/image-to-pdf/composer/model.ts'
 import type { ImageAsset } from '../src/features/image-to-pdf/core/document.ts'
 import { createImageScannerState } from '../src/features/image-to-pdf/core/scanner/geometry.ts'
+import type { ScannerCorners } from '../src/features/image-to-pdf/core/scanner/types.ts'
 
 const POINTS_PER_MM = 72 / 25.4
 const createdCanvases: Array<{ height: number; width: number }> = []
@@ -157,6 +158,7 @@ test('compone varias imágenes en una hoja y conserva los filtros al rasterizar 
   assert.ok(blob.size > 0)
   assert.deepEqual(progress, [...progress].sort((first, second) => first - second))
   assert.equal(progress.at(-1), 1)
+  assert.ok(progress.some((currentProgress) => currentProgress > 0 && currentProgress < 0.9))
 
   const loadingTask = getDocument({
     data: new Uint8Array(await blob.arrayBuffer()),
@@ -202,4 +204,124 @@ test('compone varias imágenes en una hoja y conserva los filtros al rasterizar 
   assert.ok(createdCanvases.length >= assets.length + 1)
   assert.ok(createdCanvases.every((canvas) => canvas.width === 1 && canvas.height === 1))
   await loadingTask.destroy()
+})
+
+test('integra la perspectiva del escáner y el filtro en una hoja compuesta', async () => {
+  createdCanvases.length = 0
+  const source = createCanvas(160, 100)
+  const sourceContext = source.getContext('2d')
+  sourceContext.fillStyle = '#fef3c7'
+  sourceContext.fillRect(0, 0, source.width, source.height)
+  sourceContext.fillStyle = '#e11d48'
+  sourceContext.fillRect(0, 0, 35, source.height)
+  sourceContext.fillStyle = '#2563eb'
+  sourceContext.fillRect(source.width - 35, 0, 35, source.height)
+  const file = new File([source.toBuffer('image/png')], 'scanner-sheet.png', {
+    type: 'image/png',
+  })
+  const corners: ScannerCorners = [
+    { x: 22, y: 8 },
+    { x: 138, y: 10 },
+    { x: 142, y: 92 },
+    { x: 18, y: 90 },
+  ]
+  const scannerAsset: ImageAsset = {
+    file,
+    filter: 'grayscale',
+    height: source.height,
+    id: 'scanner-sheet',
+    previewUrl: 'blob:scanner-sheet',
+    rotation: 0,
+    scanner: {
+      ...createImageScannerState(source.width, source.height),
+      active: true,
+      corners,
+      detected: true,
+    },
+    width: source.width,
+  }
+  const page = createImageCompositionPage({
+    id: 'scanner-sheet-page',
+    marginMm: 0,
+    placements: [
+      createImagePlacement({
+        assetId: scannerAsset.id,
+        height: 1,
+        id: 'scanner-sheet-placement',
+        width: 1,
+        x: 0,
+        y: 0,
+      }),
+    ],
+  })
+
+  const blob = await createCompositionPdf(
+    createImagePdfDocument([scannerAsset], [page]),
+    { fitMode: 'stretch' },
+  )
+  assert.ok(blob.size > 0)
+
+  const loadingTask = getDocument({
+    data: new Uint8Array(await blob.arrayBuffer()),
+    disableWorker: true,
+  })
+  const pdf = await loadingTask.promise
+  const pdfPage = await pdf.getPage(1)
+  const viewport = pdfPage.getViewport({ scale: 1 })
+  const rendered = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
+  await pdfPage.render({
+    background: '#ffffff',
+    canvas: rendered as unknown as HTMLCanvasElement,
+    viewport,
+  }).promise
+  const centerPixel = pixelAt(
+    rendered,
+    Math.floor(rendered.width / 2),
+    Math.floor(rendered.height / 2),
+  )
+
+  assert.ok(channelSpread(centerPixel) <= 5)
+  assert.ok(createdCanvases.every((canvas) => canvas.width === 1 && canvas.height === 1))
+  await loadingTask.destroy()
+})
+
+test('cancela una hoja compuesta entre colocaciones y no publica un PDF parcial', async () => {
+  createdCanvases.length = 0
+  const assets = [
+    createAsset('cancel-red', '#e11d48', 'original'),
+    createAsset('cancel-blue', '#2563eb', 'natural'),
+    createAsset('cancel-green', '#16a34a', 'grayscale'),
+  ]
+  const placements = assets.map((asset, index) =>
+    createImagePlacement({
+      assetId: asset.id,
+      height: 0.25,
+      id: `${asset.id}-placement`,
+      layer: index,
+      width: 0.25,
+      x: 0.05 + index * 0.3,
+      y: 0.2,
+    }),
+  )
+  const composition = createImagePdfDocument(
+    assets,
+    [createImageCompositionPage({ id: 'cancel-page', placements })],
+  )
+  const controller = new AbortController()
+  const progress: number[] = []
+
+  await assert.rejects(
+    createCompositionPdf(composition, {
+      onProgress: ({ progress: currentProgress }) => {
+        progress.push(currentProgress)
+        if (currentProgress > 0 && currentProgress < 0.9) controller.abort()
+      },
+      signal: controller.signal,
+    }),
+    (error: unknown) => error instanceof Error && error.name === 'ExportCancelledError',
+  )
+
+  assert.ok(progress.some((currentProgress) => currentProgress > 0 && currentProgress < 0.9))
+  assert.ok(progress.every((currentProgress) => currentProgress < 1))
+  assert.ok(createdCanvases.every((canvas) => canvas.width === 1 && canvas.height === 1))
 })

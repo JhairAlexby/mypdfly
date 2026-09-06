@@ -65,7 +65,12 @@ export type ImageValidationCode =
   | 'duplicate-file'
 
 export type ImageValidationResult =
-  | { readonly valid: true; readonly mimeType: ImageMimeType }
+  | {
+      readonly valid: true
+      readonly mimeType: ImageMimeType
+      readonly code?: undefined
+      readonly message?: undefined
+    }
   | {
       readonly valid: false
       readonly code: ImageValidationCode

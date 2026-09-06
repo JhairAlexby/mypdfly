@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://mypdfly.mictlanlabs.com.mx/sitemap.xml

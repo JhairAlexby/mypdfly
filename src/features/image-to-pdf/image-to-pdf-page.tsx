@@ -6,11 +6,13 @@ import type {
   PointerEvent as ReactPointerEvent,
 } from 'react'
 import {
+  AlertCircle,
   ArrowDown,
   ArrowLeft,
   ArrowUp,
   CheckCircle2,
   Crosshair,
+  Eye,
   FileDown,
   FileImage,
   GripVertical,
@@ -809,6 +811,113 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
     }
   }
 
+  if (items.length === 0) {
+    return (
+      <div className="mx-auto w-full max-w-2xl px-4 py-6 sm:px-6">
+        <input
+          ref={inputRef}
+          className="sr-only"
+          type="file"
+          accept={IMAGE_ACCEPT}
+          multiple
+          onChange={handleFileChange}
+          aria-label="Seleccionar imágenes para convertir a PDF"
+        />
+
+        <Card className="gap-0 rounded-[1.75rem] border-0 bg-white py-0 shadow-[0_30px_90px_rgba(43,50,87,0.14)] ring-1 ring-slate-200/80">
+          <CardHeader className="px-5 pt-6 pb-4 text-center sm:px-8 sm:pt-8">
+            <CardTitle className="text-xl font-semibold tracking-[-0.02em] text-slate-950 sm:text-2xl">
+              Convierte tus imágenes a PDF
+            </CardTitle>
+            <CardDescription className="mt-1 text-sm sm:text-base">
+              Selecciónalas o arrástralas a esta ventana
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent className="px-5 pb-5 sm:px-8 sm:pb-8">
+            <div
+              data-testid="image-upload-zone"
+              role="button"
+              tabIndex={0}
+              className={`upload-zone group ${isDragging ? 'upload-zone--active' : ''} ${isReading ? 'pointer-events-none opacity-70' : ''}`}
+              onClick={openFilePicker}
+              onKeyDown={handleUploadKeyDown}
+              onDragEnter={(event) => {
+                event.preventDefault()
+                setIsDragging(true)
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                  setIsDragging(false)
+                }
+              }}
+              onDrop={handleDrop}
+              aria-busy={isReading}
+              aria-label="Seleccionar o arrastrar imágenes para convertir a PDF"
+            >
+              <div className="relative grid size-20 place-items-center rounded-2xl bg-[#fff0ed] text-[#ed4c38] transition-transform duration-300 group-hover:-translate-y-1">
+                {isReading ? (
+                  <LoaderCircle className="size-9 animate-spin" aria-hidden="true" />
+                ) : (
+                  <FileImage className="size-9" strokeWidth={1.7} aria-hidden="true" />
+                )}
+                <span className="absolute -right-2 -bottom-2 grid size-8 place-items-center rounded-full border-4 border-white bg-[#ff5a45] text-white">
+                  <UploadCloud className="size-4" aria-hidden="true" />
+                </span>
+              </div>
+
+              <div className="mt-5">
+                <p className="text-base font-semibold text-slate-950 sm:text-lg">
+                  {isReading ? 'Preparando imágenes…' : 'Suelta tus imágenes aquí'}
+                </p>
+                <p className="mt-1 text-sm text-slate-500">
+                  o selecciónalas desde tu dispositivo
+                </p>
+              </div>
+
+              {!isReading && (
+                <Button
+                  type="button"
+                  size="lg"
+                  className="mt-6 h-11 rounded-xl bg-slate-950 px-5 text-white shadow-lg shadow-slate-900/15 hover:bg-slate-800"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    openFilePicker()
+                  }}
+                >
+                  <ImagePlus data-icon="inline-start" aria-hidden="true" />
+                  Seleccionar imágenes
+                </Button>
+              )}
+
+              <p className="mt-5 text-xs text-slate-400">
+                JPEG · PNG · WebP · AVIF · {formatImageLimits()}
+              </p>
+            </div>
+
+            {errors.length > 0 && (
+              <div className="mt-4 space-y-2">
+                {errors.map((error, index) => (
+                  <Alert key={index} variant="destructive" className="border-red-200 bg-red-50 px-3 py-2.5">
+                    <AlertCircle aria-hidden="true" />
+                    <AlertTitle>Archivo no compatible</AlertTitle>
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                ))}
+              </div>
+            )}
+          </CardContent>
+
+          <CardFooter className="justify-center gap-2 rounded-b-[1.75rem] border-t border-slate-100 bg-slate-50/80 px-5 py-4 text-center text-xs text-slate-500">
+            <Eye className="size-4 shrink-0 text-slate-400" aria-hidden="true" />
+            Tus imágenes se procesan localmente y nunca se suben a un servidor.
+          </CardFooter>
+        </Card>
+      </div>
+    )
+  }
+
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -852,70 +961,6 @@ export function ImageToPdfPage({ homeHref = '/' }: ImageToPdfPageProps) {
             onChange={handleFileChange}
             aria-label="Seleccionar imágenes para convertir a PDF"
           />
-
-          {items.length === 0 && (
-            <div
-              data-testid="image-upload-zone"
-              role="button"
-              tabIndex={0}
-              className={`group grid min-h-80 cursor-pointer place-items-center rounded-3xl border-2 border-dashed border-slate-300 bg-slate-50/80 px-5 py-10 text-center outline-none transition sm:min-h-96 sm:px-8 ${
-                isDragging
-                  ? 'scale-[1.01] border-[#ff7867] bg-[#fff9f7] ring-4 ring-[#ff5a45]/10'
-                  : 'hover:border-[#ff7867] hover:bg-[#fff9f7] focus-visible:border-[#ff7867] focus-visible:ring-4 focus-visible:ring-[#ff5a45]/10'
-              } ${isReading ? 'pointer-events-none opacity-70' : ''}`}
-              onClick={openFilePicker}
-              onKeyDown={handleUploadKeyDown}
-              onDragEnter={(event) => {
-                event.preventDefault()
-                setIsDragging(true)
-              }}
-              onDragOver={(event) => event.preventDefault()}
-              onDragLeave={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget as Node)) {
-                  setIsDragging(false)
-                }
-              }}
-              onDrop={handleDrop}
-              aria-busy={isReading}
-              aria-label="Seleccionar o arrastrar imágenes para convertir a PDF"
-            >
-              <div>
-                <div className="relative mx-auto grid size-20 place-items-center rounded-2xl bg-[#fff0ed] text-[#e84c38] transition-transform duration-300 group-hover:-translate-y-1">
-                  {isReading ? (
-                    <LoaderCircle className="size-9 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <FileImage className="size-9" strokeWidth={1.7} aria-hidden="true" />
-                  )}
-                  <span className="absolute -right-2 -bottom-2 grid size-8 place-items-center rounded-full border-4 border-white bg-[#ff5a45] text-white">
-                    <UploadCloud className="size-4" aria-hidden="true" />
-                  </span>
-                </div>
-                <p className="mt-6 text-lg font-semibold text-slate-950 sm:text-xl">
-                  {isReading ? 'Preparando imágenes…' : 'Suelta tus imágenes aquí'}
-                </p>
-                <p className="mt-1 text-sm text-slate-500">
-                  o selecciónalas desde tu dispositivo
-                </p>
-                {!isReading && (
-                  <Button
-                    type="button"
-                    size="lg"
-                    className="mt-6 h-11 rounded-xl bg-slate-950 px-5 text-white shadow-lg shadow-slate-900/15 hover:bg-slate-800"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      openFilePicker()
-                    }}
-                  >
-                    <ImagePlus data-icon="inline-start" aria-hidden="true" />
-                    Seleccionar imágenes
-                  </Button>
-                )}
-                <p className="mt-5 text-xs text-slate-400">
-                  JPEG · PNG · WebP · AVIF · {formatImageLimits()}
-                </p>
-              </div>
-            </div>
-          )}
 
           {errors.length > 0 && (
             <Alert variant="destructive" className="border-red-200 bg-red-50">

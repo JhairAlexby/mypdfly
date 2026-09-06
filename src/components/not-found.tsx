@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 
@@ -32,7 +33,7 @@ export function NotFound({
         </h1>
 
         <p className="mx-auto mt-6 max-w-lg text-pretty text-base leading-7 text-slate-600 sm:text-lg">
-          La dirección que abriste no forma parte de mypdfly. Puedes volver al editor con total tranquilidad: tus archivos siguen en tu dispositivo.
+          La dirección que abriste no forma parte de mypdfly. Puedes volver al inicio con total tranquilidad: tus archivos siguen en tu dispositivo.
         </p>
 
         <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
@@ -41,7 +42,7 @@ export function NotFound({
             size="lg"
             className="h-11 rounded-xl bg-slate-950 px-5 text-white hover:bg-slate-800"
           >
-            <a href={homeHref}>Volver al editor</a>
+            <Link to={homeHref}>Volver al inicio</Link>
           </Button>
           {onGoBack && (
             <Button

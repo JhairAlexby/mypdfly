@@ -7,6 +7,7 @@ import { PdfEditorPage } from '@/pages/PdfEditorPage'
 import { NotFound } from '@/components/not-found'
 import { AppHeader } from '@/components/app-header'
 import { AppFooter } from '@/components/app-footer'
+import { LegalPage } from '@/pages/LegalPage'
 import './App.css'
 
 function NotFoundPage() {
@@ -36,6 +37,10 @@ function App() {
           <Route path="/imagenes-a-pdf" element={<ImageToPdfPage />} />
           <Route path="/editor-pdf" element={<PdfEditorPage />} />
           <Route path="/comprimir" element={<Navigate to="/comprimir-pdf" replace />} />
+          <Route path="/privacy" element={<LegalPage document="privacy" />} />
+          <Route path="/terms" element={<LegalPage document="terms" />} />
+          <Route path="/web/privacy" element={<LegalPage document="privacy" platform="web" />} />
+          <Route path="/web/terms" element={<LegalPage document="terms" platform="web" />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </BrowserRouter>
